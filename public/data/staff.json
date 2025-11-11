@@ -1,0 +1,82 @@
+[
+  {
+    "id": "S-101",
+    "Name": "Aarav Patel",
+    "RespectiveZone": "Zone C",
+    "In": "Y",
+    "Phone": "+91 6942705288",
+    "Image": "/assets/staff/S-101.jpg"
+  },
+  {
+    "id": "S-102",
+    "Name": "Diya Sharma",
+    "RespectiveZone": "Zone C",
+    "In": "N",
+    "Phone": "+91 8178639612",
+    "Image": "/assets/staff/S-102.jpg"
+  },
+  {
+    "id": "S-103",
+    "Name": "Rohan Singh",
+    "RespectiveZone": "Zone C",
+    "In": "Y",
+    "Phone": "+91 9869929996",
+    "Image": "/assets/staff/S-103.jpg"
+  },
+  {
+    "id": "S-104",
+    "Name": "Ananya Iyer",
+    "RespectiveZone": "Zone C",
+    "In": "N",
+    "Phone": "+91 6401820781",
+    "Image": "/assets/staff/S-104.jpg"
+  },
+  {
+    "id": "S-105",
+    "Name": "Vihaan Mehta",
+    "RespectiveZone": "Zone C",
+    "In": "N",
+    "Phone": "+91 8846889494",
+    "Image": "/assets/staff/S-105.jpg"
+  },
+  {
+    "id": "S-106",
+    "Name": "Ishita Reddy",
+    "RespectiveZone": "Zone A",
+    "In": "N",
+    "Phone": "+91 8204197080",
+    "Image": "/assets/staff/S-106.jpg"
+  },
+  {
+    "id": "S-107",
+    "Name": "Arjun Das",
+    "RespectiveZone": "Zone A",
+    "In": "N",
+    "Phone": "+91 8224969262",
+    "Image": "/assets/staff/S-107.jpg"
+  },
+  {
+    "id": "S-108",
+    "Name": "Kavya Menon",
+    "RespectiveZone": "Zone C",
+    "In": "Y",
+    "Phone": "+91 6498760071",
+    "Image": "/assets/staff/S-108.jpg"
+  },
+  {
+    "id": "S-109",
+    "Name": "Devansh Gupta",
+    "RespectiveZone": "Zone B",
+    "In": "N",
+    "Phone": "+91 9177250403",
+    "Image": "/assets/staff/S-109.jpg"
+  },
+  {
+    "id": "S-110",
+    "Name": "Sneha Nair",
+    "RespectiveZone": "Zone B",
+    "In": "Y",
+    "Phone": "+91 6146627242",
+    "Image": "/assets/staff/S-110.jpg"
+  }
+]
