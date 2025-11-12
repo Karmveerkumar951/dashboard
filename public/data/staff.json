@@ -2,7 +2,7 @@
   {
     "id": "S-101",
     "Name": "Aarav Patel",
-    "RespectiveZone": "Zone C",
+    "RespectiveZone": "Zone A",
     "In": "Y",
     "Phone": "+91 6942705288",
     "Image": "/assets/staff/S-101.jpg"
@@ -10,7 +10,7 @@
   {
     "id": "S-102",
     "Name": "Diya Sharma",
-    "RespectiveZone": "Zone C",
+    "RespectiveZone": "Zone B",
     "In": "N",
     "Phone": "+91 8178639612",
     "Image": "/assets/staff/S-102.jpg"
@@ -26,7 +26,7 @@
   {
     "id": "S-104",
     "Name": "Ananya Iyer",
-    "RespectiveZone": "Zone C",
+    "RespectiveZone": "Zone B",
     "In": "N",
     "Phone": "+91 6401820781",
     "Image": "/assets/staff/S-104.jpg"
@@ -34,7 +34,7 @@
   {
     "id": "S-105",
     "Name": "Vihaan Mehta",
-    "RespectiveZone": "Zone C",
+    "RespectiveZone": "Zone A",
     "In": "N",
     "Phone": "+91 8846889494",
     "Image": "/assets/staff/S-105.jpg"
@@ -50,7 +50,7 @@
   {
     "id": "S-107",
     "Name": "Arjun Das",
-    "RespectiveZone": "Zone A",
+    "RespectiveZone": "Zone B",
     "In": "N",
     "Phone": "+91 8224969262",
     "Image": "/assets/staff/S-107.jpg"
