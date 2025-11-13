@@ -96,6 +96,15 @@ export default function RetailDashboard() {
   const [selectedZone, setSelectedZone] = useState(null);
   const [showZoneModal, setShowZoneModal] = useState(false);
 
+  // item detail modal state
+  const [selectedItem, setSelectedItem] = useState(null);
+  function openItemDetails(item) {
+    setSelectedItem(item);
+  }
+  function closeItemDetails() {
+    setSelectedItem(null);
+  }
+
   const totalRef = useRef(null);
   const misplacedRef = useRef(null);
   const teamRef = useRef(null);
@@ -133,6 +142,7 @@ export default function RetailDashboard() {
       if (e.key === 'Escape') {
         setAnchoredPanel({ open: false, type: null, top: 0 });
         setShowZoneModal(false);
+        setSelectedItem(null);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -174,6 +184,7 @@ export default function RetailDashboard() {
   function closeZoneModal() {
     setSelectedZone(null);
     setShowZoneModal(false);
+    setSelectedItem(null);
   }
 
   function productImageUrl(p) {
@@ -478,7 +489,7 @@ export default function RetailDashboard() {
                         <div className="mt-3 space-y-2">
                           {misplacedInSelectedZone.length > 0 ? (
                             misplacedInSelectedZone.map(it => (
-                              <div key={it.SKU || it.id} className="p-2 border rounded flex items-center justify-between">
+                              <button key={it.SKU || it.id} onClick={() => openItemDetails(it)} className="w-full p-2 border rounded flex items-center justify-between text-left hover:bg-gray-50">
                                 <div className="flex items-center gap-3">
                                   <img src={productImageUrl(it)} alt={it.Name} className="w-12 h-12 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
                                   <div>
@@ -487,10 +498,7 @@ export default function RetailDashboard() {
                                     <div className="text-xs text-gray-500">Default zone: {formatZoneName(it.ZoneName || it.defaultzone || '—')}</div>
                                   </div>
                                 </div>
-                                <div>
-                                  <button onClick={() => alert('Open item ' + (it.SKU || it.id))} className="text-indigo-600 text-sm">Open</button>
-                                </div>
-                              </div>
+                              </button>
                             ))
                           ) : (
                             <div className="text-sm text-gray-500">No misplaced items in this zone.</div>
@@ -521,6 +529,50 @@ export default function RetailDashboard() {
 
                     </div>
                   </div>
+
+                  {/* Item detail full-cover panel (covers previous panel) */}
+                  {selectedItem && (
+                    <div className="absolute inset-0 z-80" role="dialog" aria-modal="true">
+                      <div className="absolute inset-0 bg-black/40" onClick={closeItemDetails} />
+                      <div className="absolute inset-0 bg-white overflow-auto p-6">
+                        <div className="flex items-start justify-between mb-4">
+                          <div>
+                            <h3 className="text-2xl font-semibold">{selectedItem.Name}</h3>
+                            <div className="text-sm text-gray-500">SKU: {selectedItem.SKU} • RFID: {selectedItem.RFID}</div>
+                          </div>
+                          <button onClick={closeItemDetails} className="text-gray-700 text-xl">✕</button>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-6">
+                          <div className="col-span-1">
+                            <img src={productImageUrl(selectedItem)} alt={selectedItem.Name} className="w-full h-64 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
+                            {/* additional images could be shown here if available */}
+                          </div>
+
+                          <div className="col-span-2">
+                            <div className="mb-4">
+                              <h4 className="text-lg font-semibold">Details</h4>
+                              <div className="mt-2 text-sm text-gray-700 space-y-1">
+                                <div>Status: <span className="font-medium">{selectedItem.Status || selectedItem.status || '—'}</span></div>
+                                <div>Default zone: <span className="font-medium">{formatZoneName(selectedItem.ZoneName || selectedItem.defaultzone || '—')}</span></div>
+                                <div>Current zone: <span className="font-medium">{formatZoneName(selectedItem.Zone || selectedItem.zone || '—')}</span></div>
+                                <div>Additional info: <span className="font-medium">{selectedItem.Note || selectedItem.Notes || '—'}</span></div>
+                              </div>
+                            </div>
+
+                            <div>
+                              <h4 className="text-lg font-semibold">Actions</h4>
+                              <div className="mt-2 flex gap-3">
+                                <button onClick={() => alert('Mark as returned: ' + (selectedItem.SKU || selectedItem.id))} className="px-3 py-2 border rounded">Mark as returned</button>
+                                <button onClick={() => alert('Assign to zone: ' + (selectedItem.SKU || selectedItem.id))} className="px-3 py-2 border rounded">Assign to zone</button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               </div>
             )}
