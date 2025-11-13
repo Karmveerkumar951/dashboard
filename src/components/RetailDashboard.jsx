@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 
-// Note: include Inter in index.html for best typography
 const FLOOR_PLAN_SRC = '/assets/floorplan.png';
 const DEFAULT_PRODUCT_IMG = '/assets/placeholder-product.png';
 const DEFAULT_STAFF_IMG = '/assets/placeholder-staff.png';
@@ -15,7 +13,6 @@ function useDebounce(value, delay = 160) {
   return debounced;
 }
 
-// Simple fuzzy subsequence matcher (returns positions of matches)
 function fuzzyMatchPositions(text = '', query = '') {
   const t = String(text).toLowerCase();
   const q = String(query).toLowerCase();
@@ -33,17 +30,27 @@ function fuzzyMatchPositions(text = '', query = '') {
   return positions;
 }
 
-// Highlight component now returns plain text (highlighting removed)
-function Highlight({ text = '', query = '' }) {
+function Highlight({ text = '' }) {
   return <>{text}</>;
 }
 
+// helper to normalize zone strings
+function formatZoneName(zone) {
+  if (!zone) return '—';
+  const z = String(zone);
+  if (z.toLowerCase().startsWith('zone ')) {
+    return z.slice(5).trim(); // strip leading "Zone " -> returns 'A', 'B', etc.
+  }
+  return z;
+}
+
+// No motion version
 const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gradient, shadow, ariaLabel }, ref) {
   return (
     <button
       ref={ref}
       onClick={onClick}
-      className={`rounded-2xl px-6 py-4 min-w-[180px] text-left flex-1 text-white border border-white/8 focus:outline-none transition-all transform hover:brightness-105 hover:-translate-y-0.5 ${gradient} ${shadow}`}
+      className={`rounded-md px-6 py-4 min-w-[180px] text-left flex-1 text-white border border-white/8 focus:outline-none ${gradient} ${shadow}`}
       aria-label={ariaLabel}
     >
       <div className="text-sm font-semibold tracking-wide">{title}</div>
@@ -61,7 +68,6 @@ export default function RetailDashboard() {
   const debouncedQuery = useDebounce(searchQuery, 160);
   const [anchoredPanel, setAnchoredPanel] = useState({ open: false, type: null, top: 0 });
 
-  // suggestion state for search-as-you-type
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -73,7 +79,6 @@ export default function RetailDashboard() {
     if (type === 'team') {
       return staff.filter(s => (s.Name || '').toLowerCase().startsWith(q)).slice(0, limit);
     }
-    // default: products
     return products.filter(p => (p.Name || '').toLowerCase().startsWith(q)).slice(0, limit);
   }
 
@@ -155,17 +160,7 @@ export default function RetailDashboard() {
   }
 
   function openAnchoredPanel(type) {
-    const ref = type === 'total' ? totalRef : type === 'misplaced' ? misplacedRef : teamRef;
-    const mapEl = mapRef.current;
-    const btn = ref.current;
-    if (!mapEl || !btn) {
-      setAnchoredPanel({ open: true, type, top: 0 });
-      return;
-    }
-    const mapRect = mapEl.getBoundingClientRect();
-    const btnRect = btn.getBoundingClientRect();
-    const top = Math.max(0, btnRect.bottom - mapRect.top) - 6;
-    setAnchoredPanel({ open: true, type, top });
+    setAnchoredPanel({ open: true, type, top: 0 });
   }
 
   function closeAnchoredPanel() {
@@ -194,7 +189,6 @@ export default function RetailDashboard() {
     return DEFAULT_STAFF_IMG;
   }
 
-  // Scored search: prioritizes prefix (startsWith) -> substring (includes) -> fuzzy
   function scoredSearch(items = [], query = '', fields = ['Name']) {
     if (!query) return items.slice();
     const q = String(query).toLowerCase();
@@ -203,47 +197,29 @@ export default function RetailDashboard() {
       .map(item => {
         const fieldValues = fields.map(f => (item[f] || item[f.toLowerCase()] || '')).filter(Boolean);
         let bestScore = 99;
-        let matchedField = '';
         for (const raw of fieldValues) {
           const s = String(raw).toLowerCase();
           if (!s) continue;
           if (s.startsWith(q)) {
             bestScore = Math.min(bestScore, 0);
-            matchedField = raw;
             break;
           } else if (s.includes(q)) {
             bestScore = Math.min(bestScore, 1);
-            matchedField = raw;
           } else {
             const pos = fuzzyMatchPositions(s, q);
-            if (pos && pos.length > 0) {
-              bestScore = Math.min(bestScore, 2);
-              matchedField = raw;
-            }
+            if (pos.length > 0) bestScore = Math.min(bestScore, 2);
           }
         }
-        return { item, score: bestScore, matchedField };
+        return { item, score: bestScore };
       })
       .filter(x => x.score < 99)
-      .sort((a, b) => {
-        if (a.score !== b.score) return a.score - b.score;
-        const an = (a.item.Name || a.item.SKU || '').toLowerCase();
-        const bn = (b.item.Name || b.item.SKU || '').toLowerCase();
-        return an.localeCompare(bn);
-      })
+      .sort((a, b) => a.score - b.score)
       .map(x => x.item);
   }
 
-  const effectiveQuery = debouncedQuery; // use debounced query for snappy UX
+  const filteredProducts = scoredSearch(products, debouncedQuery, ['Name', 'SKU', 'RFID']);
+  const filteredStaff = scoredSearch(staff, debouncedQuery, ['Name', 'id']);
 
-  const filteredProducts = scoredSearch(products, effectiveQuery, ['Name', 'SKU', 'RFID']);
-  const filteredStaff = scoredSearch(staff, effectiveQuery, ['Name', 'id']);
-
-  const staffInZone = selectedZone ? staff.filter(s => (s.RespectiveZone === selectedZone) || (s.ZoneName === selectedZone) || (s.Zone === selectedZone)) : [];
-
-  const panelBg = anchoredPanel.type ? getPanelColor(anchoredPanel.type) : 'rgba(255,255,255,0.85)';
-
-  // heatmap helpers
   function zoneMisplacedCounts() {
     const zones = ['Zone A', 'Zone B', 'Zone C'];
     const counts = {};
@@ -270,14 +246,32 @@ export default function RetailDashboard() {
   const zoneCounts = zoneMisplacedCounts();
   const maxZoneCount = Math.max(1, ...Object.values(zoneCounts));
 
-  const anchoredVariants = {
-    hidden: { y: -12, opacity: 0, scale: 0.995 },
-    visible: { y: 0, opacity: 1, scale: 1 },
-    exit: { y: -10, opacity: 0, scale: 0.995 }
-  };
+  // --- New helpers for the selected zone modal content ---
+  const currentZone = selectedZone;
+  const itemsInSelectedZone = currentZone
+    ? products.filter(it => {
+        const current = it.Zone || it.zone || it.ZoneName || it.zoneName;
+        return current === currentZone;
+      })
+    : [];
 
-  const zoneBackdrop = { hidden: { opacity: 0 }, visible: { opacity: 1 }, exit: { opacity: 0 } };
-  const zoneContent = { hidden: { opacity: 0, scale: 0.98, y: 8 }, visible: { opacity: 1, scale: 1, y: 0 }, exit: { opacity: 0, scale: 0.98, y: 8 } };
+  // misplaced items in the selected zone: items currently in the zone but whose default/home zone is different
+  const misplacedInSelectedZone = currentZone
+    ? products.filter(it => {
+        const current = it.Zone || it.zone || it.ZoneName || it.zoneName;
+        const defaultZone = it.ZoneName || it.zoneName || it.defaultZone || it.defaultzone;
+        return current === currentZone && defaultZone && current !== defaultZone;
+      })
+    : [];
+
+  // employees assigned to the selected zone
+  const employeesInSelectedZone = currentZone
+    ? staff.filter(s => (s.RespectiveZone === currentZone) || (s.ZoneName === currentZone) || (s.Zone === currentZone))
+    : [];
+
+  // zone summary values
+  const totalInZoneCount = itemsInSelectedZone.length;
+  const misplacedInZoneCount = misplacedInSelectedZone.length;
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-gray-50 to-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
@@ -290,7 +284,7 @@ export default function RetailDashboard() {
 
         <div className="flex-1 bg-white rounded-3xl shadow-[0_20px_40px_rgba(2,6,23,0.06)] p-4 relative overflow-hidden flex flex-col" ref={mapContainerRef}>
           <div className={`flex items-center justify-between mb-2 ${anchoredPanel.open || showZoneModal ? 'hidden' : ''}`}>
-            <h2 className="text-2xl font-extrabold text-gray-800 drop-shadow-sm">Store Floor — Live View</h2>
+            <h2 className="text-2xl font-extrabold text-gray-800">Store Floor — Live View</h2>
           </div>
 
           <div ref={mapRef} className="flex-1 relative rounded-2xl overflow-hidden border border-gray-200 shadow-inner">
@@ -307,10 +301,10 @@ export default function RetailDashboard() {
                   role="button"
                   tabIndex={0}
                   onClick={() => onZoneClick('Zone A')}
-                  className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer transition-all"
+                  className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer"
                   style={{ background: heatColorForCount(zoneCounts['Zone A'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}
                 >
-                  <div className="p-2 text-white font-semibold drop-shadow-lg">Zone A</div>
+                  <div className="p-2 text-white font-semibold">Zone: {formatZoneName('Zone A')}</div>
                   <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['Zone A'] || 0}</div>
                 </div>
 
@@ -318,10 +312,10 @@ export default function RetailDashboard() {
                   role="button"
                   tabIndex={0}
                   onClick={() => onZoneClick('Zone B')}
-                  className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer transition-all"
+                  className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer"
                   style={{ background: heatColorForCount(zoneCounts['Zone B'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}
                 >
-                  <div className="p-2 text-white font-semibold drop-shadow-lg">Zone B</div>
+                  <div className="p-2 text-white font-semibold">Zone: {formatZoneName('Zone B')}</div>
                   <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['Zone B'] || 0}</div>
                 </div>
 
@@ -329,228 +323,207 @@ export default function RetailDashboard() {
                   role="button"
                   tabIndex={0}
                   onClick={() => onZoneClick('Zone C')}
-                  className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer transition-all"
+                  className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer"
                   style={{ background: heatColorForCount(zoneCounts['Zone C'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}
                 >
-                  <div className="p-2 text-white font-semibold drop-shadow-lg">Zone C</div>
+                  <div className="p-2 text-white font-semibold">Zone: {formatZoneName('Zone C')}</div>
                   <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['Zone C'] || 0}</div>
                 </div>
-
               </>
             )}
 
-            <AnimatePresence>
-              {anchoredPanel.open && (
-                <motion.div
-                  initial="hidden"
-                  animate="visible"
-                  exit="exit"
-                  variants={anchoredVariants}
-                  transition={{ duration: 0.22, ease: 'easeOut' }}
-                  className="absolute left-0 right-0 z-50"
-                  style={{ top: anchoredPanel.top, bottom: 0 }}
-                >
-                  <div className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10" style={{ background: panelBg, backdropFilter: 'blur(8px)' }}>
-                    <div className="h-1 w-full" style={{ background: 'linear-gradient(90deg, rgba(99,102,241,0.9), rgba(34,211,238,0.85))' }} />
-
-                    <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
-                      <h3 className="text-lg font-semibold drop-shadow-lg text-white">
-                        {anchoredPanel.type === 'total' ? `All items (${totalItems})` : anchoredPanel.type === 'misplaced' ? `Misplaced items (${misplacedItems.length})` : `Team (${totalTeam})`}
-                      </h3>
-                      <button onClick={closeAnchoredPanel} className="text-white text-xl drop-shadow-md" aria-label="Close panel">✕</button>
-                    </div>
-
-                    <div className="p-4 overflow-auto h-[calc(100%-72px)] text-white">
-                      <div className="mb-3 flex items-center gap-2 relative">
-                        {/* Search input with suggestion dropdown */}
-                        <div className="relative flex-1">
-                          <input
-                            value={searchQuery}
-                            onChange={e => { setSearchQuery(e.target.value); setSuggestionIndex(-1); setShowSuggestions(true); }}
-                            onFocus={() => setShowSuggestions(true)}
-                            onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                            onKeyDown={(e) => {
-                              if (!showSuggestions) return;
-                              if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestionIndex(i => Math.min(i + 1, suggestions.length - 1)); }
-                              else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestionIndex(i => Math.max(i - 1, 0)); }
-                              else if (e.key === 'Enter') {
-                                if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
-                                  const sel = suggestions[suggestionIndex];
-                                  setSearchQuery(sel.Name || sel.id || sel.SKU || '');
-                                  setShowSuggestions(false);
-                                }
-                              }
-                            }}
-                            placeholder="Search products / staff..."
-                            aria-label="Search"
-                            className="w-full p-2 border rounded text-black"
-                          />
-
-                          {/* suggestions dropdown */}
-                          {showSuggestions && searchQuery && suggestions.length > 0 && (
-                            <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
-                              {suggestions.map((s, idx) => (
-                                <li
-                                  key={(s.SKU || s.id) + idx}
-                                  role="option"
-                                  aria-selected={idx === suggestionIndex}
-                                  onMouseDown={(ev) => { ev.preventDefault(); /* prevent blur */ setSearchQuery(s.Name || s.id || s.SKU || ''); setShowSuggestions(false); }}
-                                  className={`px-3 py-2 cursor-pointer hover:bg-gray-100 flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
-                                >
-                                  <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
-                                  <div className="flex-1 text-sm text-gray-800"><Highlight text={s.Name || s.SKU || s.id || ''} query={searchQuery} /></div>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-
-                        <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }} className="px-3 py-2 bg-white/12 rounded text-white">Clear</button>
-                      </div>
-
-                      {anchoredPanel.type === 'total' && (
-                        <div className="grid grid-cols-2 gap-3">
-                          {filteredProducts.map(p => (
-                            <div key={p.SKU || p.id} className="p-3 border border-white/6 rounded-xl bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
-                              <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
-                              <div className="flex-1 text-white/95">
-                                <div className="font-medium text-sm"><Highlight text={p.Name} query={debouncedQuery} /></div>
-                                <div className="text-xs mt-1">SKU: <Highlight text={p.SKU || ''} query={debouncedQuery} /></div>
-                                <div className="text-xs">RFID: <Highlight text={p.RFID || ''} query={debouncedQuery} /></div>
-                                <div className="text-xs">Zone: {p.Zone || p.zone} • {p.ZoneName || p.zoneName}</div>
-                                <div className="text-xs">Status: {p.Status || p.status}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {anchoredPanel.type === 'misplaced' && (
-                        <div className="space-y-3">
-                          {misplacedItems.map(p => (
-                            <div key={p.SKU || p.id} className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
-                              <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
-                              <div className="flex-1 text-white/95">
-                                <div className="font-medium text-sm"><Highlight text={p.Name} query={debouncedQuery} /></div>
-                                <div className="text-xs">SKU: {p.SKU} • RFID: {p.RFID}</div>
-                                <div className="text-xs">Default zone: {p.ZoneName || p.defaultzone} • Current zone: {p.Zone}</div>
-                                <div className="text-xs">Status: {p.Status || p.status}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {anchoredPanel.type === 'team' && (
-                        <div className="space-y-3">
-                          {filteredStaff.map(s => (
-                            <div key={s.id} className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
-                              <img src={staffImageUrl(s)} alt={s.Name} className="w-20 h-20 object-cover rounded-full border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_STAFF_IMG; }} />
-                              <div className="flex-1 text-white/95">
-                                <div className="font-medium text-sm"><Highlight text={s.Name} query={debouncedQuery} /></div>
-                                <div className="text-xs">Zone: {s.RespectiveZone || s.ZoneName || s.Zone}</div>
-                                <div className="text-xs">In store: {String(s.In || s.InStore || s.In === 'Y' || s.In === true)}</div>
-                                <div className="text-xs">Phone: {s.Phone || s.phone || s.phoneNumber}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+            {anchoredPanel.open && (
+              <div className="absolute left-0 right-0 z-50" style={{ top: anchoredPanel.top, bottom: 0 }}>
+                <div className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10" style={{ background: getPanelColor(anchoredPanel.type), backdropFilter: 'blur(8px)' }}>
+                  <div className="flex items-center justify-between p-4 border-b bg-white/5">
+                    <h3 className="text-lg font-semibold text-white">
+                      {anchoredPanel.type === 'total' ? `All items (${totalItems})` : anchoredPanel.type === 'misplaced' ? `Misplaced items (${misplacedItems.length})` : `Team (${totalTeam})`}
+                    </h3>
+                    <button onClick={closeAnchoredPanel} className="text-white text-xl rounded-md" aria-label="Close panel">✕</button>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
 
-            <AnimatePresence>
-              {showZoneModal && (
-                <>
-                  <motion.div
-                    key="zone-backdrop"
-                    initial="hidden"
-                    animate="visible"
-                    exit="exit"
-                    variants={zoneBackdrop}
-                    transition={{ duration: 0.18 }}
-                    className="absolute inset-0 z-60"
-                    style={{ background: 'rgba(0,0,0,0.42)' }}
-                    onClick={closeZoneModal}
-                  />
+                  <div className="p-4 overflow-auto h-[calc(100%-72px)] text-white">
+                    <div className="mb-3 flex items-center gap-2 relative">
+                      <div className="relative flex-1">
+                        <input
+                          value={searchQuery}
+                          onChange={e => { setSearchQuery(e.target.value); setSuggestionIndex(-1); setShowSuggestions(true); }}
+                          onFocus={() => setShowSuggestions(true)}
+                          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                          onKeyDown={(e) => {
+                            if (!showSuggestions) return;
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestionIndex(i => Math.min(i + 1, suggestions.length - 1)); }
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestionIndex(i => Math.max(i - 1, 0)); }
+                            else if (e.key === 'Enter') {
+                              if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
+                                const sel = suggestions[suggestionIndex];
+                                setSearchQuery(sel.Name || sel.id || sel.SKU || '');
+                                setShowSuggestions(false);
+                              }
+                            }
+                          }}
+                          placeholder="Search products / staff..."
+                          aria-label="Search"
+                          className="w-full p-2 border rounded text-black"
+                        />
 
-                  <motion.div
-                    key="zone-content"
-                    initial="hidden"
-                    animate="visible"
-                    exit="exit"
-                    variants={zoneContent}
-                    transition={{ duration: 0.28, ease: 'easeOut' }}
-                    className="absolute inset-0 z-70 flex items-center justify-center p-6"
-                    aria-modal="true"
-                    role="dialog"
-                  >
-                    <div className="relative w-full h-full bg-white rounded-2xl shadow-2xl overflow-auto border border-gray-100">
-                      <div className="flex items-center justify-between p-4 border-b">
-                        <h3 className="text-lg font-semibold">{selectedZone} — Zone Details</h3>
-                        <button onClick={closeZoneModal} className="text-gray-600 hover:text-gray-900" aria-label="Close zone modal">✕</button>
+                        {showSuggestions && searchQuery && suggestions.length > 0 && (
+                          <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
+                            {suggestions.map((s, idx) => (
+                              <li
+                                key={(s.SKU || s.id) + idx}
+                                role="option"
+                                aria-selected={idx === suggestionIndex}
+                                onMouseDown={(ev) => { ev.preventDefault(); setSearchQuery(s.Name || s.id || s.SKU || ''); setShowSuggestions(false); }}
+                                className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
+                              >
+                                <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
+                                <div className="flex-1 text-sm text-gray-800"><Highlight text={s.Name || s.SKU || s.id || ''} /></div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
 
-                      <div className="p-4 grid grid-cols-2 gap-4 h-[calc(100%-64px)]">
-                        <div className="h-full">
-                          <img src={FLOOR_PLAN_SRC} alt="Zone top view" className="w-full h-full object-contain rounded" />
-                        </div>
+                      <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }} className="px-3 py-2 bg-white/12 rounded-md text-white">Clear</button>
+                    </div>
 
-                        <div className="h-full overflow-auto">
-                          <h4 className="font-semibold">Misplaced items in {selectedZone}</h4>
-                          <div className="mt-3 space-y-2">
-                            {products.filter(it => ((it.Zone === selectedZone) || (it.zone === selectedZone) || (it.ZoneName === selectedZone) || (it.zoneName === selectedZone)) && (it.ZoneName !== it.zoneName)).map(it => (
+                    {anchoredPanel.type === 'total' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {filteredProducts.map(p => (
+                          <div key={p.SKU || p.id} className={`p-3 border border-white/6 rounded-xl backdrop-blur-sm shadow-md flex gap-3 items-center ${p.Zone !== p.ZoneName ? 'bg-red-500/20' : 'bg-white/6'}`}>
+                            <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
+                            <div className="flex-1 text-white/95">
+                              <div className="font-medium text-sm"><Highlight text={p.Name} /></div>
+                              <div className="text-xs mt-1">SKU: <Highlight text={p.SKU || ''} /></div>
+                              <div className="text-xs">RFID: <Highlight text={p.RFID || ''} /></div>
+                              <div className="text-xs">Default zone: {formatZoneName(p.ZoneName || p.zoneName || p.defaultzone)}</div>
+                              <div className="text-xs">Current zone: {formatZoneName(p.Zone || p.zone)}</div>
+                              <div className="text-xs">Status: {p.Status || p.status}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {anchoredPanel.type === 'misplaced' && (
+                      <div className="space-y-3">
+                        {misplacedItems.map(p => (
+                          <div key={p.SKU || p.id} className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
+                            <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
+                            <div className="flex-1 text-white/95">
+                              <div className="font-medium text-sm"><Highlight text={p.Name} /></div>
+                              <div className="text-xs">SKU: {p.SKU} • RFID: {p.RFID}</div>
+                              <div className="text-xs">Default zone: {formatZoneName(p.ZoneName || p.defaultzone)} • Current zone: {formatZoneName(p.Zone)}</div>
+                              <div className="text-xs">Status: {p.Status || p.status}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {anchoredPanel.type === 'team' && (
+                      <div className="space-y-3">
+                        {filteredStaff.map(s => (
+                          <div key={s.id} className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
+                            <img src={staffImageUrl(s)} alt={s.Name} className="w-20 h-20 object-cover rounded-full border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_STAFF_IMG; }} />
+                            <div className="flex-1 text-white/95">
+                              <div className="font-medium text-sm"><Highlight text={s.Name} /></div>
+                              <div className="text-xs">Zone: {formatZoneName(s.RespectiveZone || s.ZoneName || s.Zone)}</div>
+                              <div className="text-xs">In store: {String(s.In || s.InStore || s.In === 'Y' || s.In === true)}</div>
+                              <div className="text-xs">Phone: {s.Phone || s.phone || s.phoneNumber}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SINGLE full-coverage zone modal (replaces earlier duplicates) */}
+            {showZoneModal && (
+              <div className="absolute inset-0 z-70" role="dialog" aria-modal="true">
+                {/* Dark overlay behind modal */}
+                <div className="absolute inset-0 bg-black/40" onClick={closeZoneModal} />
+
+                {/* Panel that fully covers the map area (edge-to-edge) */}
+                <div className="absolute inset-0 bg-white overflow-auto">
+                  {/* Header */}
+                  <div className="flex items-center justify-between p-4 border-b">
+                    <h3 className="text-lg font-semibold">Zone: {formatZoneName(selectedZone)} — Zone Details</h3>
+                    <button onClick={closeZoneModal} className="text-gray-600" aria-label="Close zone modal">✕</button>
+                  </div>
+
+                  {/* Content: Zone Summary (first), Misplaced Items (second), Employees Assigned (third) */}
+                  <div className="p-4 grid grid-cols-2 gap-4 h-[calc(100%-64px)]">
+                    <div className="h-full">
+                      <img src={FLOOR_PLAN_SRC} alt="Zone top view" className="w-full h-full object-contain" />
+                    </div>
+
+                    <div className="h-full overflow-auto">
+                      {/* 1) Zone Summary */}
+                      <div className="mb-4">
+                        <h4 className="text-lg font-semibold">Zone Summary</h4>
+                        <div className="mt-2 text-sm text-gray-700">
+                          <div>Total items in Zone: <span className="font-medium">{totalInZoneCount}</span></div>
+                          <div className="mt-1">Misplaced items in Zone: <span className="font-medium">{misplacedInZoneCount}</span></div>
+                        </div>
+                      </div>
+
+                      {/* 2) Misplaced items (only items currently in this zone but belong elsewhere) */}
+                      <div className="mb-6">
+                        <h4 className="text-lg font-semibold">Misplaced items in Zone</h4>
+                        <div className="mt-3 space-y-2">
+                          {misplacedInSelectedZone.length > 0 ? (
+                            misplacedInSelectedZone.map(it => (
                               <div key={it.SKU || it.id} className="p-2 border rounded flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                   <img src={productImageUrl(it)} alt={it.Name} className="w-12 h-12 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
                                   <div>
                                     <div className="font-medium">{it.Name}</div>
                                     <div className="text-xs text-gray-500">{it.SKU} • RFID: {it.RFID}</div>
+                                    <div className="text-xs text-gray-500">Default zone: {formatZoneName(it.ZoneName || it.defaultzone || '—')}</div>
                                   </div>
                                 </div>
                                 <div>
                                   <button onClick={() => alert('Open item ' + (it.SKU || it.id))} className="text-indigo-600 text-sm">Open</button>
                                 </div>
                               </div>
-                            ))}
-
-                            {products.filter(it => ((it.Zone === selectedZone) || (it.zone === selectedZone) || (it.ZoneName === selectedZone) || (it.zoneName === selectedZone)) && (it.ZoneName !== it.zoneName)).length === 0 && (
-                              <div className="text-sm text-gray-500">No misplaced items in this zone.</div>
-                            )}
-                          </div>
-
-                          <div className="mt-6">
-                            <h5 className="font-semibold">Employees assigned to {selectedZone}</h5>
-                            <div className="mt-3 space-y-2">
-                              {staffInZone.map(s => (
-                                <div key={s.id} className="p-2 border rounded flex items-center gap-3">
-                                  <img src={staffImageUrl(s)} alt={s.Name} className="w-12 h-12 rounded-full object-cover" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_STAFF_IMG }} />
-                                  <div>
-                                    <div className="font-medium">{s.Name}</div>
-                                    <div className="text-xs text-gray-500">Zone: {s.RespectiveZone || s.ZoneName}</div>
-                                    <div className="text-xs text-gray-500">In store: {s.In}</div>
-                                  </div>
-                                </div>
-                              ))}
-
-                              {staffInZone.length === 0 && <div className="text-sm text-gray-500">No employees assigned to this zone.</div>}
-                            </div>
-
-                            <div className="mt-6">
-                              <h5 className="font-semibold">Zone Summary</h5>
-                              <div className="text-sm text-gray-600 mt-2">Misplaced items: {products.filter(it=>it.Zone === selectedZone && it.ZoneName !== it.zoneName).length}</div>
-                            </div>
-                          </div>
+                            ))
+                          ) : (
+                            <div className="text-sm text-gray-500">No misplaced items in this zone.</div>
+                          )}
                         </div>
                       </div>
+
+                      {/* 3) Employees assigned to the zone */}
+                      <div>
+                        <h4 className="text-lg font-semibold">Employees assigned to Zone</h4>
+                        <div className="mt-3 space-y-2">
+                          {employeesInSelectedZone.length > 0 ? (
+                            employeesInSelectedZone.map(s => (
+                              <div key={s.id} className="p-2 border rounded flex items-center gap-3">
+                                <img src={staffImageUrl(s)} alt={s.Name} className="w-12 h-12 rounded-full object-cover" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_STAFF_IMG }} />
+                                <div>
+                                  <div className="font-medium">{s.Name}</div>
+                                  <div className="text-xs text-gray-500">Zone: {formatZoneName(s.RespectiveZone || s.ZoneName || '—')}</div>
+                                  <div className="text-xs text-gray-500">In store: {String(s.In)}</div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-sm text-gray-500">No employees assigned to this zone.</div>
+                          )}
+                        </div>
+                      </div>
+
                     </div>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
+                  </div>
+                </div>
+              </div>
+            )}
 
           </div>
         </div>
