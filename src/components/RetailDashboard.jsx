@@ -72,25 +72,33 @@ export default function RetailDashboard() {
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  function getPrefixSuggestions(query, type) {
-    const q = String(query || '').trim().toLowerCase();
-    if (!q) return [];
-    const limit = 6;
-    if (type === 'team') {
-      return staff.filter(s => (s.Name || '').toLowerCase().startsWith(q)).slice(0, limit);
-    }
-    return products.filter(p => (p.Name || '').toLowerCase().startsWith(q)).slice(0, limit);
-  }
-
   useEffect(() => {
     if (!searchQuery) {
       setSuggestions([]);
       setSuggestionIndex(-1);
       return;
     }
-    const s = getPrefixSuggestions(searchQuery, anchoredPanel.type);
-    setSuggestions(s);
-    setSuggestionIndex(-1);
+    // Build suggestions depending on which panel is open:
+    const q = String(searchQuery || '').trim().toLowerCase();
+    if (!q) {
+      setSuggestions([]);
+      return;
+    }
+    const limit = 6;
+    if (anchoredPanel.type === 'team') {
+      setSuggestions(staff.filter(s => (s.Name || '').toLowerCase().startsWith(q)).slice(0, limit));
+    } else if (anchoredPanel.type === 'misplaced') {
+      // suggestions from misplaced items only
+      const misplacedCandidates = products.filter(p => {
+        const current = p.Zone || p.zone || p.ZoneName || p.zoneName;
+        const defaultZone = p.ZoneName || p.zoneName || p.defaultZone || p.defaultzone;
+        return current && defaultZone && current !== defaultZone;
+      });
+      setSuggestions(misplacedCandidates.filter(p => ((p.Name || '').toLowerCase().startsWith(q) || (p.SKU || '').toLowerCase().startsWith(q))).slice(0, limit));
+    } else {
+      // total / default: products
+      setSuggestions(products.filter(p => (p.Name || '').toLowerCase().startsWith(q) || (p.SKU || '').toLowerCase().startsWith(q)).slice(0, limit));
+    }
   }, [searchQuery, anchoredPanel.type, products, staff]);
 
   const [selectedZone, setSelectedZone] = useState(null);
@@ -150,7 +158,12 @@ export default function RetailDashboard() {
   }, []);
 
   const totalItems = products.length;
-  const misplacedItems = products.filter(p => (p.Zone || p.zone || p.ZoneName) && (p.ZoneName && p.Zone && p.Zone !== p.ZoneName));
+  // misplacedItems (global) — items whose current zone != default zone
+  const misplacedItems = products.filter(p => {
+    const current = p.Zone || p.zone || p.ZoneName || p.zoneName;
+    const defaultZone = p.ZoneName || p.zoneName || p.defaultZone || p.defaultzone;
+    return current && defaultZone && current !== defaultZone;
+  });
   const totalTeam = staff.length;
 
   function getPanelGradient(type) {
@@ -228,8 +241,11 @@ export default function RetailDashboard() {
       .map(x => x.item);
   }
 
+  // filtered lists
   const filteredProducts = scoredSearch(products, debouncedQuery, ['Name', 'SKU', 'RFID']);
   const filteredStaff = scoredSearch(staff, debouncedQuery, ['Name', 'id']);
+  // filtered misplaced respects the search query when the misplaced panel is open
+  const filteredMisplaced = scoredSearch(misplacedItems, debouncedQuery, ['Name', 'SKU', 'RFID']);
 
   function zoneMisplacedCounts() {
     const zones = ['Zone A', 'Zone B', 'Zone C'];
@@ -370,6 +386,8 @@ export default function RetailDashboard() {
                                 const sel = suggestions[suggestionIndex];
                                 setSearchQuery(sel.Name || sel.id || sel.SKU || '');
                                 setShowSuggestions(false);
+                                // open details for the selected suggestion
+                                if (sel) openItemDetails(sel);
                               }
                             }
                           }}
@@ -385,7 +403,13 @@ export default function RetailDashboard() {
                                 key={(s.SKU || s.id) + idx}
                                 role="option"
                                 aria-selected={idx === suggestionIndex}
-                                onMouseDown={(ev) => { ev.preventDefault(); setSearchQuery(s.Name || s.id || s.SKU || ''); setShowSuggestions(false); }}
+                                onMouseDown={(ev) => {
+                                  ev.preventDefault();
+                                  setSearchQuery(s.Name || s.id || s.SKU || '');
+                                  setShowSuggestions(false);
+                                  // open details immediately for this suggestion
+                                  openItemDetails(s);
+                                }}
                                 className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
                               >
                                 <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
@@ -402,7 +426,12 @@ export default function RetailDashboard() {
                     {anchoredPanel.type === 'total' && (
                       <div className="grid grid-cols-2 gap-3">
                         {filteredProducts.map(p => (
-                          <div key={p.SKU || p.id} className={`p-3 border border-white/6 rounded-xl backdrop-blur-sm shadow-md flex gap-3 items-center ${p.Zone !== p.ZoneName ? 'bg-red-500/20' : 'bg-white/6'}`}>
+                          <div
+                            key={p.SKU || p.id}
+                            onClick={() => openItemDetails(p)}
+                            role="button"
+                            className={`p-3 border border-white/6 rounded-xl backdrop-blur-sm shadow-md flex gap-3 items-center cursor-pointer ${p.Zone !== p.ZoneName ? 'bg-red-500/20' : 'bg-white/6'}`}
+                          >
                             <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
                             <div className="flex-1 text-white/95">
                               <div className="font-medium text-sm"><Highlight text={p.Name} /></div>
@@ -419,8 +448,13 @@ export default function RetailDashboard() {
 
                     {anchoredPanel.type === 'misplaced' && (
                       <div className="space-y-3">
-                        {misplacedItems.map(p => (
-                          <div key={p.SKU || p.id} className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
+                        {filteredMisplaced.map(p => (
+                          <div
+                            key={p.SKU || p.id}
+                            onClick={() => openItemDetails(p)}
+                            role="button"
+                            className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center cursor-pointer"
+                          >
                             <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
                             <div className="flex-1 text-white/95">
                               <div className="font-medium text-sm"><Highlight text={p.Name} /></div>
@@ -546,7 +580,6 @@ export default function RetailDashboard() {
                         <div className="grid grid-cols-3 gap-6">
                           <div className="col-span-1">
                             <img src={productImageUrl(selectedItem)} alt={selectedItem.Name} className="w-full h-64 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
-                            {/* additional images could be shown here if available */}
                           </div>
 
                           <div className="col-span-2">
