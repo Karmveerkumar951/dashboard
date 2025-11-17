@@ -45,19 +45,57 @@ function formatZoneName(zone) {
 }
 
 // No motion version
-const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gradient, shadow, ariaLabel }, ref) {
+const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gradient, shadow, ariaLabel, icon }, ref) {
+  // Outer button: shows 1px gradient border via padding
+  // Inner panel: white surface with dark text to create a premium outlined card
   return (
     <button
       ref={ref}
       onClick={onClick}
-      className={`rounded-md px-6 py-4 min-w-[180px] text-left flex-1 text-white border border-white/8 focus:outline-none ${gradient} ${shadow}`}
       aria-label={ariaLabel}
+      className={`rounded-md p-[6px] min-w-[180px] flex-1 focus:outline-none ${gradient} ${shadow}`}
     >
-      <div className="text-sm font-semibold tracking-wide">{title}</div>
-      <div className="mt-2 text-3xl font-extrabold">{value}</div>
+      {/* inner panel - visible card surface */}
+      <div className={`rounded-md px-6 py-4 text-left bg-white`}> 
+        <div className="flex items-center gap-3">
+          {icon && (
+            <div className="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0" aria-hidden="true">
+              {/* Icon inherits currentColor; set color to match gradient via inline style if needed by parent */}
+              {icon}
+            </div>
+          )}
+          <div className="flex-1">
+            <div className="text-sm font-semibold tracking-wide text-gray-700">{title}</div>
+            <div className="mt-2 text-3xl font-extrabold text-gray-900">{value}</div>
+          </div>
+        </div>
+      </div>
     </button>
   );
 });
+
+// small inline SVG icons (no escaped quotes)
+const IconBox = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M21 16V8a2 2 0 0 0-1-1.73L13 2.27a2 2 0 0 0-2 0L4 6.27A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4.46a2 2 0 0 0 2 0l7-4.46A2 2 0 0 0 21 16z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 9.5l5 3 5-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconAlert = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 9v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 17h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconUsers = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
 export default function RetailDashboard() {
   const [products, setProducts] = useState([]);
@@ -304,9 +342,9 @@ export default function RetailDashboard() {
     <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-gray-50 to-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
       <div className="max-w-[1400px] mx-auto h-full p-6 flex flex-col gap-6">
         <div className="flex gap-4 items-stretch">
-          <StatCard ref={totalRef} title="TOTAL ITEMS" value={loading ? '—' : totalItems} onClick={() => openAnchoredPanel('total')} gradient={getPanelGradient('total')} shadow="shadow-2xl" />
-          <StatCard ref={misplacedRef} title="MISPLACED ITEMS" value={loading ? '—' : misplacedItems.length} onClick={() => openAnchoredPanel('misplaced')} gradient={getPanelGradient('misplaced')} shadow="shadow-2xl" />
-          <StatCard ref={teamRef} title="TOTAL TEAM" value={loading ? '—' : totalTeam} onClick={() => openAnchoredPanel('team')} gradient={getPanelGradient('team')} shadow="shadow-2xl" />
+          <StatCard ref={totalRef} title="TOTAL ITEMS" value={loading ? '—' : totalItems} onClick={() => openAnchoredPanel('total')} gradient={getPanelGradient('total')} shadow="shadow-2xl" icon={<IconBox />} />
+          <StatCard ref={misplacedRef} title="MISPLACED ITEMS" value={loading ? '—' : misplacedItems.length} onClick={() => openAnchoredPanel('misplaced')} gradient={getPanelGradient('misplaced')} shadow="shadow-2xl" icon={<IconAlert />} />
+          <StatCard ref={teamRef} title="TOTAL TEAM" value={loading ? '—' : totalTeam} onClick={() => openAnchoredPanel('team')} gradient={getPanelGradient('team')} shadow="shadow-2xl" icon={<IconUsers />} />
         </div>
 
         <div className="flex-1 bg-white rounded-3xl shadow-[0_20px_40px_rgba(2,6,23,0.06)] p-4 relative overflow-hidden flex flex-col" ref={mapContainerRef}>
