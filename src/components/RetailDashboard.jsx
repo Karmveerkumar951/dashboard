@@ -50,7 +50,7 @@ const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gra
     <button
       ref={ref}
       onClick={onClick}
-      className={`rounded-md px-6 py-4 min-w-[180px] text-left flex-1 text-white border border-white/8 focus:outline-none ${gradient} ${shadow}`}
+      className={`rounded-md px-6 py-4 min-w-[160px] text-left flex-1 text-white border border-white/8 focus:outline-none ${gradient} ${shadow}`}
       aria-label={ariaLabel}
     >
       <div className="text-sm font-semibold tracking-wide">{title}</div>
@@ -58,6 +58,74 @@ const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gra
     </button>
   );
 });
+
+// ---- helpers for table-like rows ----
+function statusPill(status) {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('published')) return { label: status, className: 'bg-green-100 text-green-800' };
+  if (s.includes('inactive') || s.includes('unsold')) return { label: status || 'Inactive', className: 'bg-red-100 text-red-800' };
+  if (s.includes('stock') || s.includes('out')) return { label: status || 'Stock Out', className: 'bg-amber-100 text-amber-800' };
+  if (s.includes('draft')) return { label: status || 'Draft', className: 'bg-gray-100 text-gray-800' };
+  return { label: status || 'Unknown', className: 'bg-gray-100 text-gray-800' };
+}
+
+function stockLabel(stock) {
+  const n = Number(stock);
+  if (Number.isNaN(n)) return { text: '—', className: '' };
+  if (n <= 0) return { text: 'Out of Stock', className: 'text-white' }; // ← updated
+  if (n <= 50) return { text: `${n} Low Stock`, className: 'text-amber-500' };
+  return { text: `${n}`, className: '' };
+}
+
+
+// UPDATED ProductRow: shows Image+Name, SKU, RFID, Current Zone, ZoneName, Stock, Status
+function ProductRow({ p, onClick }) {
+  const stock = p.Stock ?? p.StockLevel ?? p.stock ?? null;
+  const stockInfo = stockLabel(stock);
+  const pill = statusPill(p.Status || p.status || '—');
+  const sku = p.SKU || p.sku || '—';
+  const name = p.Name || p.name || '—';
+  const rfid = p.RFID || p.rfid || '—';
+  const currentZone = p.Zone || p.zone || p.ZoneName || p.zoneName || '—';
+  const zoneName = p.ZoneName || p.zoneName || p.defaultZone || p.defaultzone || '—';
+  const imgSrc = p.Image ? (p.Image.startsWith('/') ? p.Image : `/assets/products/${p.Image}`) : (p.SKU ? `/assets/products/${p.SKU}.jpg` : DEFAULT_PRODUCT_IMG);
+
+  return (
+    <div onClick={() => onClick && onClick(p)} className="w-full flex items-center gap-4 px-3 py-3 border-b bg-white/6 hover:bg-white/8 cursor-pointer">
+      {/* Image + Name */}
+      <div className="flex items-center gap-3 min-w-[260px]">
+        <img src={imgSrc} alt={name} className="w-12 h-12 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
+        <div>
+          <div className="font-medium text-sm text-white">{name}</div>
+        </div>
+      </div>
+
+      {/* SKU */}
+      <div className="w-40 text-sm text-gray-300">{sku}</div>
+
+      {/* RFID */}
+      <div className="w-40 text-sm text-gray-300">{rfid}</div>
+
+      {/* Current Zone */}
+      <div className="w-40 text-sm text-gray-300">{formatZoneName(currentZone)}</div>
+
+      {/* ZoneName (default zone) */}
+      <div className="w-40 text-sm text-gray-300">{formatZoneName(zoneName)}</div>
+
+      {/* Stock */}
+      <div className="w-36 text-sm text-center">
+        {stockInfo.text ? <span className={`${stockInfo.className} font-medium`}>{stockInfo.text}</span> : '—'}
+      </div>
+
+      {/* Status */}
+      <div className="w-36 flex justify-center">
+        <span className={`inline-block px-3 py-1 rounded-full text-sm ${pill.className}`}>{pill.label}</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------
 
 export default function RetailDashboard() {
   const [products, setProducts] = useState([]);
@@ -88,7 +156,6 @@ export default function RetailDashboard() {
     if (anchoredPanel.type === 'team') {
       setSuggestions(staff.filter(s => (s.Name || '').toLowerCase().startsWith(q)).slice(0, limit));
     } else if (anchoredPanel.type === 'misplaced') {
-      // suggestions from misplaced items only
       const misplacedCandidates = products.filter(p => {
         const current = p.Zone || p.zone || p.ZoneName || p.zoneName;
         const defaultZone = p.ZoneName || p.zoneName || p.defaultZone || p.defaultzone;
@@ -96,13 +163,15 @@ export default function RetailDashboard() {
       });
       setSuggestions(misplacedCandidates.filter(p => ((p.Name || '').toLowerCase().startsWith(q) || (p.SKU || '').toLowerCase().startsWith(q))).slice(0, limit));
     } else {
-      // total / default: products
       setSuggestions(products.filter(p => (p.Name || '').toLowerCase().startsWith(q) || (p.SKU || '').toLowerCase().startsWith(q)).slice(0, limit));
     }
   }, [searchQuery, anchoredPanel.type, products, staff]);
 
   const [selectedZone, setSelectedZone] = useState(null);
   const [showZoneModal, setShowZoneModal] = useState(false);
+
+  // NEW: rect for the zone modal (match map container)
+  const [zoneModalRect, setZoneModalRect] = useState(null);
 
   // item detail modal state
   const [selectedItem, setSelectedItem] = useState(null);
@@ -157,14 +226,66 @@ export default function RetailDashboard() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Measure map container and update zoneModalRect when showZoneModal opens
+  useEffect(() => {
+    if (!showZoneModal) {
+      setZoneModalRect(null);
+      return;
+    }
+
+    function updateRect() {
+      const el = mapContainerRef.current;
+      if (!el) return setZoneModalRect(null);
+      const r = el.getBoundingClientRect();
+      setZoneModalRect({
+        top: Math.max(0, Math.round(r.top)),
+        left: Math.max(0, Math.round(r.left)),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      });
+    }
+
+    updateRect();
+
+    window.addEventListener('resize', updateRect);
+    // listen to scrolls to keep alignment if the page scrolls
+    window.addEventListener('scroll', updateRect, true);
+
+    // Use ResizeObserver to detect size changes of the container (if available)
+    let ro;
+    const el = mapContainerRef.current;
+    if (window.ResizeObserver && el) {
+      ro = new ResizeObserver(() => {
+        updateRect();
+      });
+      ro.observe(el);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect, true);
+      if (ro && el) ro.unobserve(el);
+    };
+  }, [showZoneModal, mapContainerRef]);
+
   const totalItems = products.length;
-  // misplacedItems (global) — items whose current zone != default zone
   const misplacedItems = products.filter(p => {
     const current = p.Zone || p.zone || p.ZoneName || p.zoneName;
     const defaultZone = p.ZoneName || p.zoneName || p.defaultZone || p.defaultzone;
     return current && defaultZone && current !== defaultZone;
   });
   const totalTeam = staff.length;
+
+  // compute unique zones present in data (current + default zones)
+  const zonesSet = new Set();
+  products.forEach(p => {
+    const vals = [p.Zone, p.zone, p.ZoneName, p.zoneName, p.defaultZone, p.defaultzone].filter(Boolean);
+    vals.forEach(v => {
+      const s = String(v).trim();
+      if (s) zonesSet.add(formatZoneName(s).length === 1 ? `Zone ${formatZoneName(s)}` : s);
+    });
+  });
+  const totalZones = zonesSet.size || 3; // fallback to 3 if none loaded yet
 
   function getPanelGradient(type) {
     if (type === 'total') return 'bg-gradient-to-br from-gray-800 via-gray-700 to-gray-600 shadow-lg';
@@ -241,10 +362,8 @@ export default function RetailDashboard() {
       .map(x => x.item);
   }
 
-  // filtered lists
   const filteredProducts = scoredSearch(products, debouncedQuery, ['Name', 'SKU', 'RFID']);
   const filteredStaff = scoredSearch(staff, debouncedQuery, ['Name', 'id']);
-  // filtered misplaced respects the search query when the misplaced panel is open
   const filteredMisplaced = scoredSearch(misplacedItems, debouncedQuery, ['Name', 'SKU', 'RFID']);
 
   function zoneMisplacedCounts() {
@@ -282,7 +401,6 @@ export default function RetailDashboard() {
       })
     : [];
 
-  // misplaced items in the selected zone: items currently in the zone but whose default/home zone is different
   const misplacedInSelectedZone = currentZone
     ? products.filter(it => {
         const current = it.Zone || it.zone || it.ZoneName || it.zoneName;
@@ -291,19 +409,37 @@ export default function RetailDashboard() {
       })
     : [];
 
-  // employees assigned to the selected zone
   const employeesInSelectedZone = currentZone
     ? staff.filter(s => (s.RespectiveZone === currentZone) || (s.ZoneName === currentZone) || (s.Zone === currentZone))
     : [];
 
-  // zone summary values
   const totalInZoneCount = itemsInSelectedZone.length;
   const misplacedInZoneCount = misplacedInSelectedZone.length;
+
+  // Helper to safely read staff properties
+  function staffRole(s) {
+    return s.Role || s.Title || s.Position || 'Project Manager';
+  }
+  function staffDepartment(s) {
+    return s.Department || s.Team || s.group || '—';
+  }
+  function staffHiredDate(s) {
+    return s.HireDate || s.HiredDate || s.hiredDate || s.hireDate || '—';
+  }
+  function staffEmail(s) {
+    return s.Email || s.EmailAddress || s.email || '—';
+  }
+  function staffPhone(s) {
+    return s.Phone || s.phone || s.phoneNumber || '—';
+  }
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-gray-50 to-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
       <div className="max-w-[1400px] mx-auto h-full p-6 flex flex-col gap-6">
         <div className="flex gap-4 items-stretch">
+          {/* Extra button showing total zones */}
+          <div className="rounded-md px-6 py-4 min-w-[140px] text-left text-white bg-slate-600 flex items-center justify-center">Total Zones: <span className="ml-2 font-extrabold">{totalZones}</span></div>
+
           <StatCard ref={totalRef} title="TOTAL ITEMS" value={loading ? '—' : totalItems} onClick={() => openAnchoredPanel('total')} gradient={getPanelGradient('total')} shadow="shadow-2xl" />
           <StatCard ref={misplacedRef} title="MISPLACED ITEMS" value={loading ? '—' : misplacedItems.length} onClick={() => openAnchoredPanel('misplaced')} gradient={getPanelGradient('misplaced')} shadow="shadow-2xl" />
           <StatCard ref={teamRef} title="TOTAL TEAM" value={loading ? '—' : totalTeam} onClick={() => openAnchoredPanel('team')} gradient={getPanelGradient('team')} shadow="shadow-2xl" />
@@ -359,156 +495,228 @@ export default function RetailDashboard() {
               </>
             )}
 
-            {anchoredPanel.open && (
-              <div className="absolute left-0 right-0 z-50" style={{ top: anchoredPanel.top, bottom: 0 }}>
-                <div className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10" style={{ background: getPanelColor(anchoredPanel.type), backdropFilter: 'blur(8px)' }}>
-                  <div className="flex items-center justify-between p-4 border-b bg-white/5">
-                    <h3 className="text-lg font-semibold text-white">
-                      {anchoredPanel.type === 'total' ? `All items (${totalItems})` : anchoredPanel.type === 'misplaced' ? `Misplaced items (${misplacedItems.length})` : `Team (${totalTeam})`}
-                    </h3>
-                    <button onClick={closeAnchoredPanel} className="text-white text-xl rounded-md" aria-label="Close panel">✕</button>
-                  </div>
+           {anchoredPanel.open && (
+  <div className="absolute left-0 right-0 z-50" style={{ top: anchoredPanel.top, bottom: 0 }}>
+    <div
+      className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10 flex flex-col"
+      style={{ background: getPanelColor(anchoredPanel.type), backdropFilter: 'blur(8px)' }}
+    >
+      {/* Header (title + close) */}
+      <div className="flex items-center justify-between p-4 border-b bg-white/5">
+        <h3 className="text-lg font-semibold text-white">
+          {anchoredPanel.type === 'total' ? `All items (${totalItems})` : anchoredPanel.type === 'misplaced' ? `Misplaced items (${misplacedItems.length})` : `Team (${totalTeam})`}
+        </h3>
+        <button onClick={closeAnchoredPanel} className="text-white text-xl rounded-md" aria-label="Close panel">✕</button>
+      </div>
 
-                  <div className="p-4 overflow-auto h-[calc(100%-72px)] text-white">
-                    <div className="mb-3 flex items-center gap-2 relative">
-                      <div className="relative flex-1">
-                        <input
-                          value={searchQuery}
-                          onChange={e => { setSearchQuery(e.target.value); setSuggestionIndex(-1); setShowSuggestions(true); }}
-                          onFocus={() => setShowSuggestions(true)}
-                          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                          onKeyDown={(e) => {
-                            if (!showSuggestions) return;
-                            if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestionIndex(i => Math.min(i + 1, suggestions.length - 1)); }
-                            else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestionIndex(i => Math.max(i - 1, 0)); }
-                            else if (e.key === 'Enter') {
-                              if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
-                                const sel = suggestions[suggestionIndex];
-                                setSearchQuery(sel.Name || sel.id || sel.SKU || '');
-                                setShowSuggestions(false);
-                                // open details for the selected suggestion
-                                if (sel) openItemDetails(sel);
-                              }
-                            }
-                          }}
-                          placeholder="Search products / staff..."
-                          aria-label="Search"
-                          className="w-full p-2 border rounded text-black"
-                        />
+      {/* FIXED search area: stays visible while results scroll */}
+      <div className="p-4 border-b bg-white/5 z-40">
+        <div className="mb-0 flex items-center gap-2 relative">
+          <div className="relative flex-1">
+            <input
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setSuggestionIndex(-1); setShowSuggestions(true); }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              onKeyDown={(e) => {
+                if (!showSuggestions) return;
+                if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestionIndex(i => Math.min(i + 1, suggestions.length - 1)); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestionIndex(i => Math.max(i - 1, 0)); }
+                else if (e.key === 'Enter') {
+                  if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
+                    const sel = suggestions[suggestionIndex];
+                    setSearchQuery(sel.Name || sel.id || sel.SKU || '');
+                    setShowSuggestions(false);
+                    if (sel) openItemDetails(sel);
+                  }
+                }
+              }}
+              placeholder="Search products / staff..."
+              aria-label="Search"
+              className="w-full p-2 border rounded text-black"
+            />
 
-                        {showSuggestions && searchQuery && suggestions.length > 0 && (
-                          <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
-                            {suggestions.map((s, idx) => (
-                              <li
-                                key={(s.SKU || s.id) + idx}
-                                role="option"
-                                aria-selected={idx === suggestionIndex}
-                                onMouseDown={(ev) => {
-                                  ev.preventDefault();
-                                  setSearchQuery(s.Name || s.id || s.SKU || '');
-                                  setShowSuggestions(false);
-                                  // open details immediately for this suggestion
-                                  openItemDetails(s);
-                                }}
-                                className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
-                              >
-                                <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
-                                <div className="flex-1 text-sm text-gray-800"><Highlight text={s.Name || s.SKU || s.id || ''} /></div>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
+            {showSuggestions && searchQuery && suggestions.length > 0 && (
+              <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
+                {suggestions.map((s, idx) => (
+                  <li
+                    key={(s.SKU || s.id) + idx}
+                    role="option"
+                    aria-selected={idx === suggestionIndex}
+                    onMouseDown={(ev) => {
+                      ev.preventDefault();
+                      setSearchQuery(s.Name || s.id || s.SKU || '');
+                      setShowSuggestions(false);
+                      openItemDetails(s);
+                    }}
+                    className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
+                  >
+                    <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
+                    <div className="flex-1 text-sm text-gray-800"><Highlight text={s.Name || s.SKU || s.id || ''} /></div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
-                      <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }} className="px-3 py-2 bg-white/12 rounded-md text-white">Clear</button>
-                    </div>
+          <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }} className="px-3 py-2 bg-white/12 rounded-md text-white">Clear</button>
+        </div>
+      </div>
 
-                    {anchoredPanel.type === 'total' && (
-                      <div className="grid grid-cols-2 gap-3">
-                        {filteredProducts.map(p => (
-                          <div
-                            key={p.SKU || p.id}
-                            onClick={() => openItemDetails(p)}
-                            role="button"
-                            className={`p-3 border border-white/6 rounded-xl backdrop-blur-sm shadow-md flex gap-3 items-center cursor-pointer ${p.Zone !== p.ZoneName ? 'bg-red-500/20' : 'bg-white/6'}`}
-                          >
-                            <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
-                            <div className="flex-1 text-white/95">
-                              <div className="font-medium text-sm"><Highlight text={p.Name} /></div>
-                              <div className="text-xs mt-1">SKU: <Highlight text={p.SKU || ''} /></div>
-                              <div className="text-xs">RFID: <Highlight text={p.RFID || ''} /></div>
-                              <div className="text-xs">Default zone: {formatZoneName(p.ZoneName || p.zoneName || p.defaultzone)}</div>
-                              <div className="text-xs">Current zone: {formatZoneName(p.Zone || p.zone)}</div>
-                              <div className="text-xs">Status: {p.Status || p.status}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+      {/* Scrollable content area: only this region scrolls */}
+      <div className="p-4 overflow-auto flex-1 text-white">
+        {/* If not team, show product header + lists. If team, skip the header and show only team cards */}
+        {anchoredPanel.type !== 'team' && (
+          <>
+            {/* Header row (only for total/misplaced) */}
+            <div className="w-full flex items-center gap-4 px-3 py-2 text-sm text-gray-300 border-b">
+              <div className="min-w-[260px] font-medium">Product</div>
+              <div className="w-40 font-medium">SKU</div>
+              <div className="w-40 font-medium">RFID</div>
+              <div className="w-40 font-medium">Current Zone</div>
+              <div className="w-40 font-medium">ZoneName</div>
+              <div className="w-36 text-center font-medium">Stock</div>
+              <div className="w-36 text-center font-medium">Status</div>
+            </div>
 
-                    {anchoredPanel.type === 'misplaced' && (
-                      <div className="space-y-3">
-                        {filteredMisplaced.map(p => (
-                          <div
-                            key={p.SKU || p.id}
-                            onClick={() => openItemDetails(p)}
-                            role="button"
-                            className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center cursor-pointer"
-                          >
-                            <img src={productImageUrl(p)} alt={p.Name} className="w-20 h-20 object-cover rounded-lg border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
-                            <div className="flex-1 text-white/95">
-                              <div className="font-medium text-sm"><Highlight text={p.Name} /></div>
-                              <div className="text-xs">SKU: {p.SKU} • RFID: {p.RFID}</div>
-                              <div className="text-xs">Default zone: {formatZoneName(p.ZoneName || p.defaultzone)} • Current zone: {formatZoneName(p.Zone)}</div>
-                              <div className="text-xs">Status: {p.Status || p.status}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {anchoredPanel.type === 'team' && (
-                      <div className="space-y-3">
-                        {filteredStaff.map(s => (
-                          <div key={s.id} className="border border-white/6 rounded-xl p-3 bg-white/6 backdrop-blur-sm shadow-md flex gap-3 items-center">
-                            <img src={staffImageUrl(s)} alt={s.Name} className="w-20 h-20 object-cover rounded-full border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_STAFF_IMG; }} />
-                            <div className="flex-1 text-white/95">
-                              <div className="font-medium text-sm"><Highlight text={s.Name} /></div>
-                              <div className="text-xs">Zone: {formatZoneName(s.RespectiveZone || s.ZoneName || s.Zone)}</div>
-                              <div className="text-xs">In store: {String(s.In || s.InStore || s.In === 'Y' || s.In === true)}</div>
-                              <div className="text-xs">Phone: {s.Phone || s.phone || s.phoneNumber}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+            {/* All items (new compact rows) */}
+            {anchoredPanel.type === 'total' && (
+              <div className="mt-3">
+                {filteredProducts.map(p => (
+                  <ProductRow key={p.SKU || p.id} p={p} onClick={() => openItemDetails(p)} />
+                ))}
               </div>
             )}
 
-            {/* SINGLE full-coverage zone modal (replaces earlier duplicates) */}
-            {showZoneModal && (
-              <div className="absolute inset-0 z-70" role="dialog" aria-modal="true">
-                {/* Dark overlay behind modal */}
-                <div className="absolute inset-0 bg-black/40" onClick={closeZoneModal} />
+            {/* Misplaced items (same compact rows) */}
+            {anchoredPanel.type === 'misplaced' && (
+              <div className="mt-3">
+                {filteredMisplaced.map(p => (
+                  <ProductRow key={p.SKU || p.id} p={p} onClick={() => openItemDetails(p)} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
-                {/* Panel that fully covers the map area (edge-to-edge) */}
-                <div className="absolute inset-0 bg-white overflow-auto">
-                  {/* Header */}
+        {/* Team panel (no product header here) */}
+        {anchoredPanel.type === 'team' && (
+          <div className="mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {filteredStaff.map(s => (
+                <div key={s.id} className="relative bg-white rounded-xl p-4 shadow-sm border">
+                  {/* Header: Avatar + Name + Role */}
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <img
+                          src={staffImageUrl(s)}
+                          alt={s.Name}
+                          className="w-12 h-12 object-cover rounded-full border"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = DEFAULT_STAFF_IMG;
+                          }}
+                        />
+                        {/* Online/Offline Status Dot */}
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${
+                            s.In || s.InStore || s.In === true || s.In === 'Y' ? 'bg-green-500' : 'bg-gray-300'
+                          }`}
+                        />
+                      </div>
+                      <div className="text-left">
+                        <div className="font-semibold text-gray-900">{s.Name}</div>
+                        <div className="text-xs text-gray-500">{staffRole(s)}</div>
+                      </div>
+                    </div>
+
+                    {/* Options Menu */}
+                    <div className="text-gray-400">⋯</div>
+                  </div>
+
+                  {/* Details Card */}
+                  <div className="mt-4 bg-gray-50 rounded p-3 text-sm text-gray-700">
+                    {/* Department */}
+                    <div className="flex justify-between">
+                      <div className="text-xs text-gray-500">Department</div>
+                      <div className="text-xs font-medium">{staffDepartment(s)}</div>
+                    </div>
+
+                    {/* Hired Date */}
+                    <div className="mt-2 flex justify-between">
+                      <div className="text-xs text-gray-500">Hired Date</div>
+                      <div className="text-xs font-medium">{staffHiredDate(s)}</div>
+                    </div>
+
+                    {/* Email with Icon */}
+                    <div className="mt-3 flex items-center gap-3 text-xs text-gray-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8.5v7A2.5 2.5 0 0 0 5.5 18h13A2.5 2.5 0 0 0 21 15.5v-7A2.5 2.5 0 0 0 18.5 6h-13A2.5 2.5 0 0 0 3 8.5z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 8.5l-9 6-9-6" />
+                      </svg>
+                      <div className="truncate">{staffEmail(s)}</div>
+                    </div>
+
+                    {/* Phone with Icon */}
+                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M22 16.92V21a1 1 0 0 1-1.11 1 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 2 3.11 1 1 0 0 1 3 2h4.09a1 1 0 0 1 1 .75c.12.73.33 1.44.62 2.11a1 1 0 0 1-.24 1.04L7.7 8.7a16 16 0 0 0 6 6l1.78-1.78a1 1 0 0 1 1.04-.24c.67.29 1.38.5 2.11.62a1 1 0 0 1 .75 1z" />
+                      </svg>
+                      <div className="truncate">{staffPhone(s)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Empty State */}
+            {filteredStaff.length === 0 && (
+              <div className="mt-6 text-sm text-gray-200">No team members found.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+
+            {/* ---------- Zone modal: fixed to match the map container rect ---------- */}
+            {showZoneModal && zoneModalRect && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="z-[900]"
+                style={{
+                  position: 'fixed',
+                  top: zoneModalRect.top,
+                  left: zoneModalRect.left,
+                  width: zoneModalRect.width,
+                  height: zoneModalRect.height,
+                  pointerEvents: 'auto',
+                }}
+              >
+                {/* scrim only over map area */}
+                <div
+                  className="absolute inset-0"
+                  onClick={closeZoneModal}
+                  style={{ background: 'rgba(0,0,0,0.4)' }}
+                />
+
+                {/* content that fills the map area */}
+                <div className="absolute inset-0 bg-white overflow-auto rounded-none">
                   <div className="flex items-center justify-between p-4 border-b">
                     <h3 className="text-lg font-semibold">Zone: {formatZoneName(selectedZone)} — Zone Details</h3>
                     <button onClick={closeZoneModal} className="text-gray-600" aria-label="Close zone modal">✕</button>
                   </div>
 
-                  {/* Content: Zone Summary (first), Misplaced Items (second), Employees Assigned (third) */}
                   <div className="p-4 grid grid-cols-2 gap-4 h-[calc(100%-64px)]">
                     <div className="h-full">
                       <img src={FLOOR_PLAN_SRC} alt="Zone top view" className="w-full h-full object-contain" />
                     </div>
 
                     <div className="h-full overflow-auto">
-                      {/* 1) Zone Summary */}
                       <div className="mb-4">
                         <h4 className="text-lg font-semibold">Zone Summary</h4>
                         <div className="mt-2 text-sm text-gray-700">
@@ -517,7 +725,6 @@ export default function RetailDashboard() {
                         </div>
                       </div>
 
-                      {/* 2) Misplaced items (only items currently in this zone but belong elsewhere) */}
                       <div className="mb-6">
                         <h4 className="text-lg font-semibold">Misplaced items in Zone</h4>
                         <div className="mt-3 space-y-2">
@@ -540,7 +747,6 @@ export default function RetailDashboard() {
                         </div>
                       </div>
 
-                      {/* 3) Employees assigned to the zone */}
                       <div>
                         <h4 className="text-lg font-semibold">Employees assigned to Zone</h4>
                         <div className="mt-3 space-y-2">
@@ -564,7 +770,7 @@ export default function RetailDashboard() {
                     </div>
                   </div>
 
-                  {/* Item detail full-cover panel (covers previous panel) */}
+                  {/* item details dialog inside the map-area modal */}
                   {selectedItem && (
                     <div className="absolute inset-0 z-80" role="dialog" aria-modal="true">
                       <div className="absolute inset-0 bg-black/40" onClick={closeItemDetails} />
