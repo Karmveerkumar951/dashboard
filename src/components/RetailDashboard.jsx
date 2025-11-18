@@ -34,17 +34,15 @@ function Highlight({ text = '' }) {
   return <>{text}</>;
 }
 
-// helper to normalize zone strings
 function formatZoneName(zone) {
   if (!zone) return '—';
   const z = String(zone);
   if (z.toLowerCase().startsWith('zone ')) {
-    return z.slice(5).trim(); // strip leading "Zone " -> returns 'A', 'B', etc.
+    return z.slice(5).trim();
   }
   return z;
 }
 
-// No motion version
 const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gradient, shadow, ariaLabel }, ref) {
   return (
     <button
@@ -59,7 +57,6 @@ const StatCard = React.forwardRef(function StatCard({ title, value, onClick, gra
   );
 });
 
-// ---- helpers for table-like rows ----
 function statusPill(status) {
   const s = String(status || '').toLowerCase();
   if (s.includes('published')) return { label: status, className: 'bg-green-100 text-green-800' };
@@ -72,13 +69,11 @@ function statusPill(status) {
 function stockLabel(stock) {
   const n = Number(stock);
   if (Number.isNaN(n)) return { text: '—', className: '' };
-  if (n <= 0) return { text: 'Out of Stock', className: 'text-white' }; // ← updated
+  if (n <= 0) return { text: 'Out of Stock', className: 'text-white' };
   if (n <= 50) return { text: `${n} Low Stock`, className: 'text-amber-500' };
   return { text: `${n}`, className: '' };
 }
 
-
-// UPDATED ProductRow: shows Image+Name, SKU, RFID, Current Zone, ZoneName, Stock, Status
 function ProductRow({ p, onClick }) {
   const stock = p.Stock ?? p.StockLevel ?? p.stock ?? null;
   const stockInfo = stockLabel(stock);
@@ -92,7 +87,6 @@ function ProductRow({ p, onClick }) {
 
   return (
     <div onClick={() => onClick && onClick(p)} className="w-full flex items-center gap-4 px-3 py-3 border-b bg-white/6 hover:bg-white/8 cursor-pointer">
-      {/* Image + Name */}
       <div className="flex items-center gap-3 min-w-[260px]">
         <img src={imgSrc} alt={name} className="w-12 h-12 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
         <div>
@@ -100,32 +94,21 @@ function ProductRow({ p, onClick }) {
         </div>
       </div>
 
-      {/* SKU */}
       <div className="w-40 text-sm text-gray-300">{sku}</div>
-
-      {/* RFID */}
       <div className="w-40 text-sm text-gray-300">{rfid}</div>
-
-      {/* Current Zone */}
       <div className="w-40 text-sm text-gray-300">{formatZoneName(currentZone)}</div>
-
-      {/* ZoneName (default zone) */}
       <div className="w-40 text-sm text-gray-300">{formatZoneName(zoneName)}</div>
 
-      {/* Stock */}
       <div className="w-36 text-sm text-center">
         {stockInfo.text ? <span className={`${stockInfo.className} font-medium`}>{stockInfo.text}</span> : '—'}
       </div>
 
-      {/* Status */}
       <div className="w-36 flex justify-center">
         <span className={`inline-block px-3 py-1 rounded-full text-sm ${pill.className}`}>{pill.label}</span>
       </div>
     </div>
   );
 }
-
-// ---------------------------------------
 
 export default function RetailDashboard() {
   const [products, setProducts] = useState([]);
@@ -140,13 +123,116 @@ export default function RetailDashboard() {
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  const [selectedZone, setSelectedZone] = useState(null);
+  const [showZoneModal, setShowZoneModal] = useState(false);
+  const [zoneModalRect, setZoneModalRect] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
+
+  const totalRef = useRef(null);
+  const misplacedRef = useRef(null);
+  const teamRef = useRef(null);
+  const mapRef = useRef(null);
+  const mapContainerRef = useRef(null);
+
+  function openItemDetails(item) { setSelectedItem(item); }
+  function closeItemDetails() { setSelectedItem(null); }
+
+  function mapApiItemToProduct(item = {}) {
+    const SKU = item.SKU || item.sku || item.Sku || '';
+    const NAME = item.NAME || item.Name || item.name || '';
+    const IMAGE = item.IMAGE || item.Image || item.image || '';
+    const STATUS = item.STATUS || item.Status || item.status || '';
+    const EPC = item.EPC || item.epc || item.Epc || '';
+    const DEV_DETECTED = item.DEV_DETECTED || item.DevDetected || item.dev_detected || item.devDetected || item.Dev || '';
+    const DEV = item.DEV || item.Dev || item.dev || '';
+    const ZONE_STATUS = typeof item.ZONE_STATUS !== 'undefined' ? item.ZONE_STATUS : (item.zone_status || item.zoneStatus || false);
+
+    return {
+      SKU,
+      Name: NAME,
+      Image: IMAGE,
+      Status: STATUS,
+      RFID: EPC,
+      Zone: DEV_DETECTED,
+      ZoneName: DEV,
+      _rawApi: item,
+      zoneStatus: !!ZONE_STATUS,
+    };
+  }
+
+  useEffect(() => {
+    async function loadAll() {
+      setLoading(true);
+      async function loadLocalFiles() {
+        try {
+          const [prodRes] = await Promise.all([ fetch('http://127.0.0.1:5000/check_all') ]);
+          const prodJson = prodRes.ok ? await prodRes.json() : [];
+          if (Array.isArray(prodJson) && prodJson.length > 0) {
+            const normalized = prodJson.map(p => ({
+              SKU: p.SKU +"###" || p.sku || p.Id || p.id || '',
+              Name: p.NAME || p.Name || p.name || p.title || p.Title || '',
+              Image: p.IMAGE || p.Image || p.image || p.img || '',
+              Status: p.ZONE_STATUS || p.Status || p.status || '',
+              RFID: p.EPC || p.RFID || p.rfid || '',
+              Zone: p.currentZone || p.Zone || p.zone || '',
+              ZoneName: p.defaultZone || p.ZoneName || p.zoneName || '',
+              _rawApi: p
+            }));
+            setProducts(normalized);
+          } else {
+            setProducts([]);
+          }
+        } catch (e) {
+          console.error('Failed loading local products.json', e);
+          setProducts([]);
+        }
+      }
+
+      try {
+        const apiRes = await fetch('/check_all');
+        if (apiRes.ok) {
+          const apiJson = await apiRes.json();
+          const mapped = Array.isArray(apiJson) ? apiJson.map(mapApiItemToProduct) : [];
+          setProducts(mapped);
+        } else {
+          console.warn('/check_all returned', apiRes.status, apiRes.statusText);
+          await loadLocalFiles();
+        }
+      } catch (err) {
+        console.warn('Failed to fetch /check_all, falling back to local files', err);
+        await loadLocalFiles();
+      }
+
+      try {
+        const staffRes = await fetch('/data/staff.json');
+        const staffJson = staffRes.ok ? await staffRes.json() : [];
+        setStaff(Array.isArray(staffJson) ? staffJson : []);
+      } catch (e) {
+        console.warn('failed loading staff.json', e);
+        setStaff([]);
+      }
+
+      try {
+        const rfidRes = await fetch('/data/rfid.json');
+        const rfidJson = rfidRes.ok ? await rfidRes.json() : [];
+        setRfid(Array.isArray(rfidJson) ? rfidJson : []);
+      } catch (e) {
+        console.warn('failed loading rfid.json', e);
+        setRfid([]);
+      }
+
+      setLoading(false);
+    }
+
+    loadAll();
+  }, []);
+
   useEffect(() => {
     if (!searchQuery) {
       setSuggestions([]);
       setSuggestionIndex(-1);
       return;
     }
-    // Build suggestions depending on which panel is open:
     const q = String(searchQuery || '').trim().toLowerCase();
     if (!q) {
       setSuggestions([]);
@@ -167,53 +253,6 @@ export default function RetailDashboard() {
     }
   }, [searchQuery, anchoredPanel.type, products, staff]);
 
-  const [selectedZone, setSelectedZone] = useState(null);
-  const [showZoneModal, setShowZoneModal] = useState(false);
-
-  // NEW: rect for the zone modal (match map container)
-  const [zoneModalRect, setZoneModalRect] = useState(null);
-
-  // item detail modal state
-  const [selectedItem, setSelectedItem] = useState(null);
-  function openItemDetails(item) {
-    setSelectedItem(item);
-  }
-  function closeItemDetails() {
-    setSelectedItem(null);
-  }
-
-  const totalRef = useRef(null);
-  const misplacedRef = useRef(null);
-  const teamRef = useRef(null);
-  const mapRef = useRef(null);
-  const mapContainerRef = useRef(null);
-
-  useEffect(() => {
-    async function loadAll() {
-      try {
-        const [prodRes, staffRes, rfidRes] = await Promise.all([
-          fetch('/data/products.json'),
-          fetch('/data/staff.json'),
-          fetch('/data/rfid.json'),
-        ]);
-        const prodJson = prodRes.ok ? await prodRes.json() : [];
-        const staffJson = staffRes.ok ? await staffRes.json() : [];
-        const rfidJson = rfidRes.ok ? await rfidRes.json() : [];
-        setProducts(Array.isArray(prodJson) ? prodJson : []);
-        setStaff(Array.isArray(staffJson) ? staffJson : []);
-        setRfid(Array.isArray(rfidJson) ? rfidJson : []);
-      } catch (e) {
-        console.error('Failed loading data', e);
-        setProducts([]);
-        setStaff([]);
-        setRfid([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadAll();
-  }, []);
-
   useEffect(() => {
     function onKey(e) {
       if (e.key === 'Escape') {
@@ -226,7 +265,6 @@ export default function RetailDashboard() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Measure map container and update zoneModalRect when showZoneModal opens
   useEffect(() => {
     if (!showZoneModal) {
       setZoneModalRect(null);
@@ -248,16 +286,12 @@ export default function RetailDashboard() {
     updateRect();
 
     window.addEventListener('resize', updateRect);
-    // listen to scrolls to keep alignment if the page scrolls
     window.addEventListener('scroll', updateRect, true);
 
-    // Use ResizeObserver to detect size changes of the container (if available)
     let ro;
     const el = mapContainerRef.current;
     if (window.ResizeObserver && el) {
-      ro = new ResizeObserver(() => {
-        updateRect();
-      });
+      ro = new ResizeObserver(() => updateRect());
       ro.observe(el);
     }
 
@@ -266,7 +300,7 @@ export default function RetailDashboard() {
       window.removeEventListener('scroll', updateRect, true);
       if (ro && el) ro.unobserve(el);
     };
-  }, [showZoneModal, mapContainerRef]);
+  }, [showZoneModal]);
 
   const totalItems = products.length;
   const misplacedItems = products.filter(p => {
@@ -276,7 +310,6 @@ export default function RetailDashboard() {
   });
   const totalTeam = staff.length;
 
-  // compute unique zones present in data (current + default zones)
   const zonesSet = new Set();
   products.forEach(p => {
     const vals = [p.Zone, p.zone, p.ZoneName, p.zoneName, p.defaultZone, p.defaultzone].filter(Boolean);
@@ -285,7 +318,7 @@ export default function RetailDashboard() {
       if (s) zonesSet.add(formatZoneName(s).length === 1 ? `Zone ${formatZoneName(s)}` : s);
     });
   });
-  const totalZones = zonesSet.size || 3; // fallback to 3 if none loaded yet
+  const totalZones = zonesSet.size || 3;
 
   function getPanelGradient(type) {
     if (type === 'total') return 'bg-gradient-to-br from-gray-800 via-gray-700 to-gray-600 shadow-lg';
@@ -303,23 +336,11 @@ export default function RetailDashboard() {
     return 'rgba(249,115,22,0.85)';
   }
 
-  function openAnchoredPanel(type) {
-    setAnchoredPanel({ open: true, type, top: 0 });
-  }
+  function openAnchoredPanel(type) { setAnchoredPanel({ open: true, type, top: 0 }); }
+  function closeAnchoredPanel() { setAnchoredPanel({ open: false, type: null, top: 0 }); }
 
-  function closeAnchoredPanel() {
-    setAnchoredPanel({ open: false, type: null, top: 0 });
-  }
-
-  function onZoneClick(zoneName) {
-    setSelectedZone(zoneName);
-    setShowZoneModal(true);
-  }
-  function closeZoneModal() {
-    setSelectedZone(null);
-    setShowZoneModal(false);
-    setSelectedItem(null);
-  }
+  function onZoneClick(zoneName) { setSelectedZone(zoneName); setShowZoneModal(true); }
+  function closeZoneModal() { setSelectedZone(null); setShowZoneModal(false); setSelectedItem(null); }
 
   function productImageUrl(p) {
     if (!p) return DEFAULT_PRODUCT_IMG;
@@ -392,7 +413,6 @@ export default function RetailDashboard() {
   const zoneCounts = zoneMisplacedCounts();
   const maxZoneCount = Math.max(1, ...Object.values(zoneCounts));
 
-  // --- New helpers for the selected zone modal content ---
   const currentZone = selectedZone;
   const itemsInSelectedZone = currentZone
     ? products.filter(it => {
@@ -416,30 +436,17 @@ export default function RetailDashboard() {
   const totalInZoneCount = itemsInSelectedZone.length;
   const misplacedInZoneCount = misplacedInSelectedZone.length;
 
-  // Helper to safely read staff properties
-  function staffRole(s) {
-    return s.Role || s.Title || s.Position || 'Project Manager';
-  }
-  function staffDepartment(s) {
-    return s.Department || s.Team || s.group || '—';
-  }
-  function staffHiredDate(s) {
-    return s.HireDate || s.HiredDate || s.hiredDate || s.hireDate || '—';
-  }
-  function staffEmail(s) {
-    return s.Email || s.EmailAddress || s.email || '—';
-  }
-  function staffPhone(s) {
-    return s.Phone || s.phone || s.phoneNumber || '—';
-  }
+  function staffRole(s) { return s.Role || s.Title || s.Position || 'Project Manager'; }
+  function staffDepartment(s) { return s.Department || s.Team || s.group || '—'; }
+  function staffHiredDate(s) { return s.HireDate || s.HiredDate || s.hiredDate || s.hireDate || '—'; }
+  function staffEmail(s) { return s.Email || s.EmailAddress || s.email || '—'; }
+  function staffPhone(s) { return s.Phone || s.phone || s.phoneNumber || '—'; }
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-gray-50 to-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
+    <div className="h-screen w-screen overflow-hidden from-gray-50 to-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
       <div className="max-w-[1400px] mx-auto h-full p-6 flex flex-col gap-6">
         <div className="flex gap-4 items-stretch">
-          {/* Extra button showing total zones */}
           <div className="rounded-md px-6 py-4 min-w-[140px] text-left text-white bg-slate-600 flex items-center justify-center">Total Zones: <span className="ml-2 font-extrabold">{totalZones}</span></div>
-
           <StatCard ref={totalRef} title="TOTAL ITEMS" value={loading ? '—' : totalItems} onClick={() => openAnchoredPanel('total')} gradient={getPanelGradient('total')} shadow="shadow-2xl" />
           <StatCard ref={misplacedRef} title="MISPLACED ITEMS" value={loading ? '—' : misplacedItems.length} onClick={() => openAnchoredPanel('misplaced')} gradient={getPanelGradient('misplaced')} shadow="shadow-2xl" />
           <StatCard ref={teamRef} title="TOTAL TEAM" value={loading ? '—' : totalTeam} onClick={() => openAnchoredPanel('team')} gradient={getPanelGradient('team')} shadow="shadow-2xl" />
@@ -460,251 +467,179 @@ export default function RetailDashboard() {
                   onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }}
                 />
 
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onZoneClick('Zone A')}
-                  className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer"
-                  style={{ background: heatColorForCount(zoneCounts['Zone A'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}
-                >
+                <div role="button" tabIndex={0} onClick={() => onZoneClick('Zone A')} className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer" style={{ background: heatColorForCount(zoneCounts['Zone A'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
                   <div className="p-2 text-white font-semibold">Zone: {formatZoneName('Zone A')}</div>
                   <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['Zone A'] || 0}</div>
                 </div>
 
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onZoneClick('Zone B')}
-                  className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer"
-                  style={{ background: heatColorForCount(zoneCounts['Zone B'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}
-                >
+                <div role="button" tabIndex={0} onClick={() => onZoneClick('Zone B')} className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer" style={{ background: heatColorForCount(zoneCounts['Zone B'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
                   <div className="p-2 text-white font-semibold">Zone: {formatZoneName('Zone B')}</div>
                   <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['Zone B'] || 0}</div>
                 </div>
 
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onZoneClick('Zone C')}
-                  className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer"
-                  style={{ background: heatColorForCount(zoneCounts['Zone C'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}
-                >
+                <div role="button" tabIndex={0} onClick={() => onZoneClick('Zone C')} className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer" style={{ background: heatColorForCount(zoneCounts['Zone C'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
                   <div className="p-2 text-white font-semibold">Zone: {formatZoneName('Zone C')}</div>
                   <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['Zone C'] || 0}</div>
                 </div>
               </>
             )}
 
-           {anchoredPanel.open && (
-  <div className="absolute left-0 right-0 z-50" style={{ top: anchoredPanel.top, bottom: 0 }}>
-    <div
-      className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10 flex flex-col"
-      style={{ background: getPanelColor(anchoredPanel.type), backdropFilter: 'blur(8px)' }}
-    >
-      {/* Header (title + close) */}
-      <div className="flex items-center justify-between p-4 border-b bg-white/5">
-        <h3 className="text-lg font-semibold text-white">
-          {anchoredPanel.type === 'total' ? `All items (${totalItems})` : anchoredPanel.type === 'misplaced' ? `Misplaced items (${misplacedItems.length})` : `Team (${totalTeam})`}
-        </h3>
-        <button onClick={closeAnchoredPanel} className="text-white text-xl rounded-md" aria-label="Close panel">✕</button>
-      </div>
-
-      {/* FIXED search area: stays visible while results scroll */}
-      <div className="p-4 border-b bg-white/5 z-40">
-        <div className="mb-0 flex items-center gap-2 relative">
-          <div className="relative flex-1">
-            <input
-              value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); setSuggestionIndex(-1); setShowSuggestions(true); }}
-              onFocus={() => setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              onKeyDown={(e) => {
-                if (!showSuggestions) return;
-                if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestionIndex(i => Math.min(i + 1, suggestions.length - 1)); }
-                else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestionIndex(i => Math.max(i - 1, 0)); }
-                else if (e.key === 'Enter') {
-                  if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
-                    const sel = suggestions[suggestionIndex];
-                    setSearchQuery(sel.Name || sel.id || sel.SKU || '');
-                    setShowSuggestions(false);
-                    if (sel) openItemDetails(sel);
-                  }
-                }
-              }}
-              placeholder="Search products / staff..."
-              aria-label="Search"
-              className="w-full p-2 border rounded text-black"
-            />
-
-            {showSuggestions && searchQuery && suggestions.length > 0 && (
-              <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
-                {suggestions.map((s, idx) => (
-                  <li
-                    key={(s.SKU || s.id) + idx}
-                    role="option"
-                    aria-selected={idx === suggestionIndex}
-                    onMouseDown={(ev) => {
-                      ev.preventDefault();
-                      setSearchQuery(s.Name || s.id || s.SKU || '');
-                      setShowSuggestions(false);
-                      openItemDetails(s);
-                    }}
-                    className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
-                  >
-                    <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
-                    <div className="flex-1 text-sm text-gray-800"><Highlight text={s.Name || s.SKU || s.id || ''} /></div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }} className="px-3 py-2 bg-white/12 rounded-md text-white">Clear</button>
-        </div>
-      </div>
-
-      {/* Scrollable content area: only this region scrolls */}
-      <div className="p-4 overflow-auto flex-1 text-white">
-        {/* If not team, show product header + lists. If team, skip the header and show only team cards */}
-        {anchoredPanel.type !== 'team' && (
-          <>
-            {/* Header row (only for total/misplaced) */}
-            <div className="w-full flex items-center gap-4 px-3 py-2 text-sm text-gray-300 border-b">
-              <div className="min-w-[260px] font-medium">Product</div>
-              <div className="w-40 font-medium">SKU</div>
-              <div className="w-40 font-medium">RFID</div>
-              <div className="w-40 font-medium">Current Zone</div>
-              <div className="w-40 font-medium">ZoneName</div>
-              <div className="w-36 text-center font-medium">Stock</div>
-              <div className="w-36 text-center font-medium">Status</div>
-            </div>
-
-            {/* All items (new compact rows) */}
-            {anchoredPanel.type === 'total' && (
-              <div className="mt-3">
-                {filteredProducts.map(p => (
-                  <ProductRow key={p.SKU || p.id} p={p} onClick={() => openItemDetails(p)} />
-                ))}
-              </div>
-            )}
-
-            {/* Misplaced items (same compact rows) */}
-            {anchoredPanel.type === 'misplaced' && (
-              <div className="mt-3">
-                {filteredMisplaced.map(p => (
-                  <ProductRow key={p.SKU || p.id} p={p} onClick={() => openItemDetails(p)} />
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Team panel (no product header here) */}
-        {anchoredPanel.type === 'team' && (
-          <div className="mt-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {filteredStaff.map(s => (
-                <div key={s.id} className="relative bg-white rounded-xl p-4 shadow-sm border">
-                  {/* Header: Avatar + Name + Role */}
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        <img
-                          src={staffImageUrl(s)}
-                          alt={s.Name}
-                          className="w-12 h-12 object-cover rounded-full border"
-                          onError={(e) => {
-                            e.currentTarget.onerror = null;
-                            e.currentTarget.src = DEFAULT_STAFF_IMG;
-                          }}
-                        />
-                        {/* Online/Offline Status Dot */}
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${
-                            s.In || s.InStore || s.In === true || s.In === 'Y' ? 'bg-green-500' : 'bg-gray-300'
-                          }`}
-                        />
-                      </div>
-                      <div className="text-left">
-                        <div className="font-semibold text-gray-900">{s.Name}</div>
-                        <div className="text-xs text-gray-500">{staffRole(s)}</div>
-                      </div>
-                    </div>
-
-                    {/* Options Menu */}
-                    <div className="text-gray-400">⋯</div>
+            {anchoredPanel.open && (
+              <div className="absolute left-0 right-0 z-50" style={{ top: anchoredPanel.top, bottom: 0 }}>
+                <div className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10 flex flex-col" style={{ background: getPanelColor(anchoredPanel.type), backdropFilter: 'blur(8px)' }}>
+                  <div className="flex items-center justify-between p-4 border-b bg-white/5">
+                    <h3 className="text-lg font-semibold text-white">
+                      {anchoredPanel.type === 'total' ? `All items (${totalItems})` : anchoredPanel.type === 'misplaced' ? `Misplaced items (${misplacedItems.length})` : `Team (${totalTeam})`}
+                    </h3>
+                    <button onClick={closeAnchoredPanel} className="text-white text-xl rounded-md" aria-label="Close panel">✕</button>
                   </div>
 
-                  {/* Details Card */}
-                  <div className="mt-4 bg-gray-50 rounded p-3 text-sm text-gray-700">
-                    {/* Department */}
-                    <div className="flex justify-between">
-                      <div className="text-xs text-gray-500">Department</div>
-                      <div className="text-xs font-medium">{staffDepartment(s)}</div>
-                    </div>
+                  <div className="p-4 border-b bg-white/5 z-40">
+                    <div className="mb-0 flex items-center gap-2 relative">
+                      <div className="relative flex-1">
+                        <input
+                          value={searchQuery}
+                          onChange={e => { setSearchQuery(e.target.value); setSuggestionIndex(-1); setShowSuggestions(true); }}
+                          onFocus={() => setShowSuggestions(true)}
+                          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                          onKeyDown={(e) => {
+                            if (!showSuggestions) return;
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestionIndex(i => Math.min(i + 1, suggestions.length - 1)); }
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestionIndex(i => Math.max(i - 1, 0)); }
+                            else if (e.key === 'Enter') {
+                              if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
+                                const sel = suggestions[suggestionIndex];
+                                setSearchQuery(sel.Name || sel.id || sel.SKU || '');
+                                setShowSuggestions(false);
+                                if (sel) openItemDetails(sel);
+                              }
+                            }
+                          }}
+                          placeholder="Search products / staff..."
+                          aria-label="Search"
+                          className="w-full p-2 border rounded text-black"
+                        />
 
-                    {/* Hired Date */}
-                    <div className="mt-2 flex justify-between">
-                      <div className="text-xs text-gray-500">Hired Date</div>
-                      <div className="text-xs font-medium">{staffHiredDate(s)}</div>
-                    </div>
+                        {showSuggestions && searchQuery && suggestions.length > 0 && (
+                          <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
+                            {suggestions.map((s, idx) => (
+                              <li
+                                key={(s.SKU || s.id) + idx}
+                                role="option"
+                                aria-selected={idx === suggestionIndex}
+                                onMouseDown={(ev) => {
+                                  ev.preventDefault();
+                                  setSearchQuery(s.Name || s.id || s.SKU || '');
+                                  setShowSuggestions(false);
+                                  openItemDetails(s);
+                                }}
+                                className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
+                              >
+                                <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
+                                <div className="flex-1 text-sm text-gray-800"><Highlight text={s.Name || s.SKU || s.id || ''} /></div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
 
-                    {/* Email with Icon */}
-                    <div className="mt-3 flex items-center gap-3 text-xs text-gray-600">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8.5v7A2.5 2.5 0 0 0 5.5 18h13A2.5 2.5 0 0 0 21 15.5v-7A2.5 2.5 0 0 0 18.5 6h-13A2.5 2.5 0 0 0 3 8.5z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 8.5l-9 6-9-6" />
-                      </svg>
-                      <div className="truncate">{staffEmail(s)}</div>
+                      <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }} className="px-3 py-2 bg-white/12 rounded-md text-white">Clear</button>
                     </div>
+                  </div>
 
-                    {/* Phone with Icon */}
-                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M22 16.92V21a1 1 0 0 1-1.11 1 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 2 3.11 1 1 0 0 1 3 2h4.09a1 1 0 0 1 1 .75c.12.73.33 1.44.62 2.11a1 1 0 0 1-.24 1.04L7.7 8.7a16 16 0 0 0 6 6l1.78-1.78a1 1 0 0 1 1.04-.24c.67.29 1.38.5 2.11.62a1 1 0 0 1 .75 1z" />
-                      </svg>
-                      <div className="truncate">{staffPhone(s)}</div>
-                    </div>
+                  <div className="p-4 overflow-auto flex-1 text-white">
+                    {anchoredPanel.type !== 'team' && (
+                      <>
+                        <div className="w-full flex items-center gap-4 px-3 py-2 text-sm text-gray-300 border-b">
+                          <div className="min-w-[260px] font-medium">Product</div>
+                          <div className="w-40 font-medium">SKU</div>
+                          <div className="w-40 font-medium">RFID</div>
+                          <div className="w-40 font-medium">Current Zone</div>
+                          <div className="w-40 font-medium">ZoneName</div>
+                          <div className="w-36 text-center font-medium">Stock</div>
+                          <div className="w-36 text-center font-medium">Status</div>
+                        </div>
+
+                        {anchoredPanel.type === 'total' && (
+                          <div className="mt-3">
+                            {filteredProducts.map(p => (
+                              <ProductRow key={p.SKU || p.RFID || p._rawApi?.EPC || Math.random()} p={p} onClick={() => openItemDetails(p)} />
+                            ))}
+                          </div>
+                        )}
+
+                        {anchoredPanel.type === 'misplaced' && (
+                          <div className="mt-3">
+                            {filteredMisplaced.map(p => (
+                              <ProductRow key={p.SKU || p.RFID || p._rawApi?.EPC || Math.random()} p={p} onClick={() => openItemDetails(p)} />
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {anchoredPanel.type === 'team' && (
+                      <div className="mt-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                          {filteredStaff.map(s => (
+                            <div key={s.id} className="relative bg-white rounded-xl p-4 shadow-sm border">
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="relative">
+                                    <img src={staffImageUrl(s)} alt={s.Name} className="w-12 h-12 object-cover rounded-full border" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_STAFF_IMG; }} />
+                                    <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${s.In || s.InStore || s.In === true || s.In === 'Y' ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                  </div>
+                                  <div className="text-left">
+                                    <div className="font-semibold text-gray-900">{s.Name}</div>
+                                    <div className="text-xs text-gray-500">{staffRole(s)}</div>
+                                  </div>
+                                </div>
+                                <div className="text-gray-400">⋯</div>
+                              </div>
+
+                              <div className="mt-4 bg-gray-50 rounded p-3 text-sm text-gray-700">
+                                <div className="flex justify-between">
+                                  <div className="text-xs text-gray-500">Department</div>
+                                  <div className="text-xs font-medium">{staffDepartment(s)}</div>
+                                </div>
+                                <div className="mt-2 flex justify-between">
+                                  <div className="text-xs text-gray-500">Hired Date</div>
+                                  <div className="text-xs font-medium">{staffHiredDate(s)}</div>
+                                </div>
+
+                                <div className="mt-3 flex items-center gap-3 text-xs text-gray-600">
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8.5v7A2.5 2.5 0 0 0 5.5 18h13A2.5 2.5 0 0 0 21 15.5v-7A2.5 2.5 0 0 0 18.5 6h-13A2.5 2.5 0 0 0 3 8.5z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 8.5l-9 6-9-6" />
+                                  </svg>
+                                  <div className="truncate">{staffEmail(s)}</div>
+                                </div>
+
+                                <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M22 16.92V21a1 1 0 0 1-1.11 1 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 2 3.11 1 1 0 0 1 3 2h4.09a1 1 0 0 1 1 .75c.12.73.33 1.44.62 2.11a1 1 0 0 1-.24 1.04L7.7 8.7a16 16 0 0 0 6 6l1.78-1.78a1 1 0 0 1 1.04-.24c.67.29 1.38.5 2.11.62a1 1 0 0 1 .75 1z" />
+                                  </svg>
+                                  <div className="truncate">{staffPhone(s)}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {filteredStaff.length === 0 && (
+                          <div className="mt-6 text-sm text-gray-200">No team members found.</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
-
-            {/* Empty State */}
-            {filteredStaff.length === 0 && (
-              <div className="mt-6 text-sm text-gray-200">No team members found.</div>
+              </div>
             )}
-          </div>
-        )}
-      </div>
-    </div>
-  </div>
-)}
 
-
-            {/* ---------- Zone modal: fixed to match the map container rect ---------- */}
             {showZoneModal && zoneModalRect && (
-              <div
-                role="dialog"
-                aria-modal="true"
-                className="z-[900]"
-                style={{
-                  position: 'fixed',
-                  top: zoneModalRect.top,
-                  left: zoneModalRect.left,
-                  width: zoneModalRect.width,
-                  height: zoneModalRect.height,
-                  pointerEvents: 'auto',
-                }}
-              >
-                {/* scrim only over map area */}
-                <div
-                  className="absolute inset-0"
-                  onClick={closeZoneModal}
-                  style={{ background: 'rgba(0,0,0,0.4)' }}
-                />
+              <div role="dialog" aria-modal="true" className="z-[900]" style={{ position: 'fixed', top: zoneModalRect.top, left: zoneModalRect.left, width: zoneModalRect.width, height: zoneModalRect.height, pointerEvents: 'auto' }}>
+                <div className="absolute inset-0" onClick={closeZoneModal} style={{ background: 'rgba(0,0,0,0.4)' }} />
 
-                {/* content that fills the map area */}
                 <div className="absolute inset-0 bg-white overflow-auto rounded-none">
                   <div className="flex items-center justify-between p-4 border-b">
                     <h3 className="text-lg font-semibold">Zone: {formatZoneName(selectedZone)} — Zone Details</h3>
@@ -770,7 +705,6 @@ export default function RetailDashboard() {
                     </div>
                   </div>
 
-                  {/* item details dialog inside the map-area modal */}
                   {selectedItem && (
                     <div className="absolute inset-0 z-80" role="dialog" aria-modal="true">
                       <div className="absolute inset-0 bg-black/40" onClick={closeItemDetails} />
@@ -811,11 +745,9 @@ export default function RetailDashboard() {
                       </div>
                     </div>
                   )}
-
                 </div>
               </div>
             )}
-
           </div>
         </div>
       </div>
