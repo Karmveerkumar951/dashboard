@@ -87,6 +87,7 @@ function ProductRow({ p, onClick }) {
   const rfid = p.RFID || p.rfid || '—';
   const currentZone = p.Zone || p.zone || p.ZoneName || p.zoneName || '—';
   const zoneName = p.ZoneName || p.zoneName || p.defaultZone || p.defaultzone || '—';
+  const lastSeen = p.LastSeen || '—';
   const imgSrc = p.Image ? (p.Image.startsWith('/') ? p.Image : `/assets/products/${p.Image}`) : (p.SKU ? `/assets/products/${p.SKU}.jpg` : DEFAULT_PRODUCT_IMG);
 
   return (
@@ -102,6 +103,7 @@ function ProductRow({ p, onClick }) {
       <div className="w-40 text-sm text-gray-300">{rfid}</div>
       <div className="w-40 text-sm text-gray-300">{formatZoneName(currentZone)}</div>
       <div className="w-40 text-sm text-gray-300">{formatZoneName(zoneName)}</div>
+      <div className="w-40 text-sm text-gray-300">{lastSeen}</div>
 
       <div className="w-36 text-sm text-center">
         {stockInfo.text ? <span className={`${stockInfo.className} font-medium`}>{stockInfo.text}</span> : '—'}
@@ -147,8 +149,7 @@ export default function RetailDashboard() {
       async function fetchStaffWithFallbacks() {
         // Try endpoints in order:
         const attempts = [
-          `http://127.0.0.1:5000/staff`,      // recommended API endpoint
-             
+          `${API_BASE}/staff`,
         ];
 
         for (const url of attempts) {
@@ -175,28 +176,34 @@ export default function RetailDashboard() {
         // fetch products (check_all) and staff in parallel
         const [prodRes, staffArr] = await Promise.all([
           (async () => {
-            const res = await fetch(`http://127.0.0.1:5000/check_all`);
+            const res = await fetch(`${API_BASE}/check_all`);
             if (!res.ok) throw new Error(`API error ${res.status}`);
             return res.json();
           })(),
           fetchStaffWithFallbacks()
         ]);
 
-        // normalize products (same mapping as before)
+        // normalize products (consume LAST_SEEN and ZONE_STATUS from API)
         const apiJson = Array.isArray(prodRes) ? prodRes : [];
         const normalizedProducts = apiJson.map(p => {
           const skuRaw = p.SKU ?? p.sku ?? p.Id ?? p.id ?? '';
           const sku = skuRaw ? String(skuRaw) : '';
+          // prefer ZONE_STATUS (boolean) returned by API; fall back to older STATUS heuristics
+          const zoneStatus = (typeof p.ZONE_STATUS === 'boolean') ? p.ZONE_STATUS : (p.ZONE_STATUS ?? null);
+          const computedStatus = (typeof zoneStatus === 'boolean') ? (zoneStatus ? 'In Zone' : 'Misplaced') : (p.STATUS || p.Status || p.status || '');
+
           return {
             SKU: sku,
             Name: p.NAME || p.Name || p.name || p.title || p.Title || '',
             Image: p.IMAGE || p.Image || p.image || p.img || '',
-            Status: (typeof p.ZONE_STATUS === 'boolean') ? (p.ZONE_STATUS ? 'In Zone' : 'Misplaced') : (p.STATUS || p.Status || p.status || ''),
+            Status: computedStatus,
+            PRODUCT_STATUS: p.PRODUCT_STATUS || p.STATUS || p.Status || p.status || '',
             RFID: p.EPC || p.RFID || p.rfid || '',
             Zone: p.DEV_DETECTED || p.currentZone || p.Zone || p.zone || '',
             ZoneName: p.DEV || p.defaultZone || p.ZoneName || p.zoneName || '',
+            LastSeen: p.LAST_SEEN || p.LastSeen || p.Time || '',
             _rawApi: p,
-            Misplaced: typeof p.ZONE_STATUS === 'boolean' ? !p.ZONE_STATUS : false,
+            Misplaced: (typeof p.ZONE_STATUS === 'boolean') ? !p.ZONE_STATUS : (computedStatus === 'Misplaced'),
           };
         });
 
@@ -593,19 +600,20 @@ export default function RetailDashboard() {
                           <div className="w-40 font-medium">RFID</div>
                           <div className="w-40 font-medium">Current Zone</div>
                           <div className="w-40 font-medium">ZoneName</div>
+                          <div className="w-40 font-medium">Last Seen</div>
                           <div className="w-36 text-center font-medium">Stock</div>
                           <div className="w-36 text-center font-medium">Status</div>
                         </div>
 
                         {anchoredPanel.type === 'total' && (
                           <div className="mt-3">
-                            {filteredProducts.map(p => <ProductRow key={p.SKU || p.EPC || p._rawApi?.EPC} p={p} onClick={() => openItemDetails(p)} />)}
+                            {filteredProducts.map(p => <ProductRow key={p.SKU || p.RFID || p._rawApi?.EPC || Math.random()} p={p} onClick={() => openItemDetails(p)} />)}
                           </div>
                         )}
 
                         {anchoredPanel.type === 'misplaced' && (
                           <div className="mt-3">
-                            {filteredMisplaced.map(p => <ProductRow key={p.SKU || p.EPC || p._rawApi?.EPC} p={p} onClick={() => openItemDetails(p)} />)}
+                            {filteredMisplaced.map(p => <ProductRow key={p.SKU || p.RFID || p._rawApi?.EPC || Math.random()} p={p} onClick={() => openItemDetails(p)} />)}
                           </div>
                         )}
                       </>
@@ -764,6 +772,7 @@ export default function RetailDashboard() {
                                 <div>Status: <span className="font-medium">{selectedItem.Status || '—'}</span></div>
                                 <div>Default zone: <span className="font-medium">{formatZoneName(selectedItem.ZoneName || selectedItem.defaultzone || '—')}</span></div>
                                 <div>Current zone: <span className="font-medium">{formatZoneName(selectedItem.Zone || selectedItem.zone || '—')}</span></div>
+                                <div>Last seen: <span className="font-medium">{selectedItem.LastSeen || '—'}</span></div>
                                 <div>Additional info: <span className="font-medium">{selectedItem.Note || selectedItem.Notes || '—'}</span></div>
                               </div>
                             </div>
