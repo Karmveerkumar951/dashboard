@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+// RetailDashboard.jsx (auto-refresh / polling added)
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import StatCard from './StatCard';
 import AnchoredPanel from './AnchoredPanel';
 import ZoneModal from './ZoneModal';
@@ -9,6 +10,9 @@ const DEFAULT_PRODUCT_IMG = '/assets/placeholder-product.png';
 
 // <-- Replace this with your real API base URL
 const API_BASE = 'http://127.0.0.1:5000';
+
+// Polling interval in milliseconds (change if you want faster/slower updates)
+const POLL_INTERVAL_MS = 1000;
 
 function useDebounce(value, delay = 160) {
   const [debounced, setDebounced] = useState(value);
@@ -21,7 +25,6 @@ function useDebounce(value, delay = 160) {
 
 function formatZoneName(zone) {
   if (!zone) return '—';
-  // zone here is expected to be the single character 'A'/'B'/'C' — return as-is or "Zone X" when desired
   if (typeof zone === 'string' && zone.length === 1) return zone;
   const z = String(zone);
   if (z.toLowerCase().startsWith('zone ')) {
@@ -35,25 +38,16 @@ const DEV_TO_CHAR = {
   '087C002B': 'A',
   '087C002D': 'B',
   '087C002E': 'C',
-  // allow lowercase or alternative spellings just in case
   '087c002b': 'A',
   '087c002d': 'B',
   '087c002e': 'C',
 };
 
 function devToChar(devCode) {
-  if (!devCode && devCode !== '') return '';
-  // accept either exact code string or objects; ensure string
+  if (devCode === null || devCode === undefined) return '';
   const s = String(devCode || '').trim();
-  // handle bare character input (if already normalized)
   if (s.length === 1 && /[A-Z]/i.test(s)) return s.toUpperCase();
   return DEV_TO_CHAR[s] ?? '';
-}
-
-// reverse mapping (Zone char -> representative label used for counts / display)
-function zoneCharToLabel(char) {
-  if (!char) return '';
-  return `Zone ${char}`;
 }
 
 export default function RetailDashboard() {
@@ -63,12 +57,12 @@ export default function RetailDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedQuery = useDebounce(searchQuery, 160);
 
-  // selectedSummary: 'zones' (default), 'total', 'misplaced', 'team'
-  const [selectedSummary, setSelectedSummary] = useState('zones');
+  // UI states
+  const [selectedSummary, setSelectedSummary] = useState('zones'); // 'zones'|'total'|'misplaced'|'team'
   const anchoredOpen = selectedSummary !== 'zones';
   const anchoredType = anchoredOpen ? selectedSummary : null;
 
-  const [selectedZone, setSelectedZone] = useState(null); // will be 'A' | 'B' | 'C'
+  const [selectedZone, setSelectedZone] = useState(null); // 'A'|'B'|'C'
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [zoneModalRect, setZoneModalRect] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -78,103 +72,172 @@ export default function RetailDashboard() {
   const teamRef = useRef(null);
   const mapContainerRef = useRef(null);
 
-  // ---------- LOAD PRODUCTS + STAFF (USE UPPERCASE KEYS; DEV/Dev special-case handled) ----------
-  useEffect(() => {
-    async function loadAll() {
-      setLoading(true);
+  // Keep a ref to the current fetch abort controller so we can cancel on unmount/new fetch
+  const fetchAbortRef = useRef(null);
+  // track mounted state to avoid setState after unmount
+  const mountedRef = useRef(true);
 
-      async function fetchStaffWithFallbacks() {
-        const attempts = [`${API_BASE}/staff`];
-        for (const url of attempts) {
-          try {
-            const res = await fetch(url);
-            if (!res.ok) continue;
-            const j = await res.json();
-            if (Array.isArray(j)) return j;
-            if (j && Array.isArray(j.staff)) return j.staff;
-          } catch (e) {
-            // swallow
-          }
-        }
-        return [];
+  // ---------- Data loader (normalized to uppercase + DEV/Dev special case) ----------
+  const loadAll = useCallback(async () => {
+    // If there's an ongoing fetch, let it continue; we'll abort below if needed.
+    // Create new AbortController and cancel any previous request
+    try {
+      if (fetchAbortRef.current) {
+        try { fetchAbortRef.current.abort(); } catch (e) { /* ignore */ }
       }
+    } catch (e) {}
 
-      try {
-        const [prodRes, staffArr] = await Promise.all([
-          (async () => {
-            const res = await fetch(`${API_BASE}/check_all`);
-            if (!res.ok) throw new Error(`API error ${res.status}`);
-            return res.json();
-          })(),
-          fetchStaffWithFallbacks()
-        ]);
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
 
-        const apiJson = Array.isArray(prodRes) ? prodRes : [];
+    // set loading only if not already loading (prevents flicker)
+    if (!loading) setLoading(true);
 
-        const normalizedProducts = apiJson.map(p => {
-          const SKU = p.SKU ?? '';
-          const Name = p.NAME ?? '';
-          const Image = p.IMAGE ?? '';
-          const Status = p.STATUS ?? '';
-          const RFID = p.EPC ?? '';
-          // current detected DEV code (string like '087C002B') -> map to char
-          const rawDevDetected = p.DEV_DETECTED ?? '';
-          const Zone = devToChar(rawDevDetected); // 'A'|'B'|'C' or ''
-          // default DEV (DEV in product JSON, Dev in RFID JSON) — check both
-          const rawDevDefault = (p.DEV ?? p.Dev) ?? '';
-          const ZoneName = devToChar(rawDevDefault);
-          const LastSeen = p.LAST_SEEN ?? '';
-          const ZoneStatus = p.ZONE_STATUS; // may be boolean
+    async function fetchStaffWithFallbacks() {
+      const attempts = [`${API_BASE}/staff`];
+      for (const url of attempts) {
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) continue;
+          const j = await res.json();
+          if (Array.isArray(j)) return j;
+          if (j && Array.isArray(j.staff)) return j.staff;
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          // swallow and continue
+        }
+      }
+      return [];
+    }
 
-          const Misplaced = (typeof ZoneStatus === 'boolean') ? !ZoneStatus : (Status === 'Misplaced');
+    try {
+      const [prodRes, staffArr] = await Promise.all([
+        (async () => {
+          const res = await fetch(`${API_BASE}/check_all`, { signal: controller.signal });
+          if (!res.ok) throw new Error(`API error ${res.status}`);
+          return res.json();
+        })(),
+        fetchStaffWithFallbacks()
+      ]);
 
-          return {
-            SKU,
-            Name,
-            Image,
-            Status,
-            RFID,
-            Zone,      // single character (A/B/C) for current detected zone
-            ZoneName,  // single character (A/B/C) for default zone
-            LastSeen,
-            _rawApi: p,
-            Misplaced
-          };
-        });
+      if (!mountedRef.current) return;
 
-        const normalizedStaff = (Array.isArray(staffArr) ? staffArr : []).map(s => {
-          const id = s.ID ?? s.Id ?? s.id ?? '';
-          const Name = s.NAME ?? s.Name ?? s.name ?? '';
-          // staff may also report Dev codes; normalize to single character if present
-          const rawResZone = s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? s.Dev ?? s.DEV ?? '';
-          const RespectiveZone = devToChar(rawResZone) || '';
-          const InRaw = s.IN ?? s.In ?? s.in ?? 'N';
+      const apiJson = Array.isArray(prodRes) ? prodRes : [];
 
-          return {
-            id,
-            Name,
-            RespectiveZone,
-            In: InRaw === true || String(InRaw).toLowerCase() === 'y' || String(InRaw).toLowerCase() === 'true',
-            Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
-            Image: s.IMAGE ?? s.Image ?? s.image ?? '',
-            _raw: s
-          };
-        });
+      const normalizedProducts = apiJson.map(p => {
+        const SKU = p.SKU ?? '';
+        const Name = p.NAME ?? '';
+        const Image = p.IMAGE ?? '';
+        const Status = p.STATUS ?? '';
+        const RFID = p.EPC ?? '';
+        const Zone = devToChar(p.DEV_DETECTED ?? '');
+        const ZoneName = devToChar((p.DEV ?? p.Dev) ?? '');
+        const LastSeen = p.LAST_SEEN ?? '';
+        const ZoneStatus = p.ZONE_STATUS;
 
-        setProducts(normalizedProducts);
-        setStaff(normalizedStaff);
-      } catch (err) {
+        const Misplaced = (typeof ZoneStatus === 'boolean') ? !ZoneStatus : (Status === 'Misplaced');
+
+        return {
+          SKU, Name, Image, Status, RFID, Zone, ZoneName, LastSeen, _rawApi: p, Misplaced
+        };
+      });
+
+      const normalizedStaff = (Array.isArray(staffArr) ? staffArr : []).map(s => {
+        const id = s.ID ?? s.Id ?? s.id ?? '';
+        const Name = s.NAME ?? s.Name ?? s.name ?? '';
+        const RespectiveZone = devToChar(s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? s.Dev ?? s.DEV ?? '') || '';
+        const InRaw = s.IN ?? s.In ?? s.in ?? 'N';
+        return {
+          id, Name, RespectiveZone,
+          In: InRaw === true || String(InRaw).toLowerCase() === 'y' || String(InRaw).toLowerCase() === 'true',
+          Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
+          Image: s.IMAGE ?? s.Image ?? s.image ?? '',
+          _raw: s
+        };
+      });
+
+      setProducts(normalizedProducts);
+      setStaff(normalizedStaff);
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        // fetch aborted — ignore
+      } else {
         console.error('Failed loading data from API', err);
-        setProducts([]);
-        setStaff([]);
-      } finally {
+        if (mountedRef.current) {
+          setProducts([]);
+          setStaff([]);
+        }
+      }
+    } finally {
+      if (mountedRef.current) {
         setLoading(false);
+      }
+      // clear controller ref if it is the one we just used
+      if (fetchAbortRef.current === controller) fetchAbortRef.current = null;
+    }
+  }, [loading]);
+
+  // Initial load + polling logic
+  useEffect(() => {
+    mountedRef.current = true;
+
+    // run immediately on mount
+    loadAll().catch(() => {});
+
+    // polling timer
+    let intervalId = null;
+
+    function startPolling() {
+      if (intervalId) return;
+      intervalId = setInterval(() => {
+        // only fetch when tab is visible
+        if (document.visibilityState === 'visible') {
+          loadAll().catch(() => {});
+        }
+      }, POLL_INTERVAL_MS);
+    }
+
+    function stopPolling() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
       }
     }
 
-    loadAll();
-  }, []);
+    // start polling initially (but loadAll guards with visibility check in the interval)
+    startPolling();
 
+    // visibility handling: when tab becomes visible, fetch immediately and ensure polling runs; when hidden, stop polling
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        loadAll().catch(() => {});
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // also fetch when window regains focus (useful if user switched windows)
+    function onFocus() {
+      if (document.visibilityState === 'visible') {
+        loadAll().catch(() => {});
+      }
+    }
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      mountedRef.current = false;
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onFocus);
+      // abort any ongoing fetch
+      try { if (fetchAbortRef.current) fetchAbortRef.current.abort(); } catch (e) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadAll]);
+
+  // Key handling (escape)
   useEffect(() => {
     function onKey(e) {
       if (e.key === 'Escape') {
@@ -187,7 +250,7 @@ export default function RetailDashboard() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // measure map container rect for zone modal
+  // Measure map container and zone modal rect
   useEffect(() => {
     if (!showZoneModal) {
       setZoneModalRect(null);
@@ -224,21 +287,18 @@ export default function RetailDashboard() {
     };
   }, [showZoneModal]);
 
-  // derived values
+  // derived values & helpers (same logic as you had)
   const totalItems = products.length;
   const misplacedItems = products.filter(p => p.Misplaced);
   const totalTeam = staff.length;
 
-  // compute zone counts keyed by the single character 'A'/'B'/'C'
   function zoneMisplacedCounts() {
-    const zoneKeys = ['A', 'B', 'C'];
     const counts = { A: 0, B: 0, C: 0 };
     products.forEach(p => {
-      const current = p.Zone;      // 'A' | 'B' | 'C' | ''
-      const defaultZone = p.ZoneName; // 'A' | 'B' | 'C' | ''
+      const current = p.Zone;
+      const defaultZone = p.ZoneName;
       if (current && defaultZone && current !== defaultZone) {
-        if (!counts[current]) counts[current] = 0;
-        counts[current] += 1;
+        counts[current] = (counts[current] || 0) + 1;
       }
     });
     return counts;
@@ -247,36 +307,28 @@ export default function RetailDashboard() {
   const zoneCounts = zoneMisplacedCounts();
   const maxZoneCount = Math.max(1, ...Object.values(zoneCounts));
 
-  // threshold function: per-zone threshold. Currently adaptive: 5% of total items (min 1)
   function thresholdForZone() {
     return Math.max(1, Math.round(totalItems * 0.05));
   }
 
-  // overlay color logic: color depends on whether zone has exceeded its threshold (not tied to misplaced button color)
   function overlayColorForCountByThreshold(count, max) {
     const thr = thresholdForZone();
     if (!count || count === 0) {
-      // fully transparent
       return 'transparent';
     }
     const ratio = max ? Math.min(1, count / max) : 0.2;
-    // style:
-    // - below threshold -> green translucent
-    // - equals threshold -> amber translucent
-    // - above threshold -> red translucent (stronger)
     if (count > thr) {
-      const alpha = 0.18 + 0.5 * ratio; // stronger red
-      return `rgba(220,38,38,${alpha.toFixed(3)})`; // red-600-ish
+      const alpha = 0.18 + 0.5 * ratio;
+      return `rgba(220,38,38,${alpha.toFixed(3)})`;
     } else if (count === thr) {
       const alpha = 0.14 + 0.45 * ratio;
-      return `rgba(234,179,8,${alpha.toFixed(3)})`; // amber-500-ish
+      return `rgba(234,179,8,${alpha.toFixed(3)})`;
     } else {
       const alpha = 0.08 + 0.5 * ratio;
-      return `rgba(34,197,94,${alpha.toFixed(3)})`; // green-500-ish
+      return `rgba(34,197,94,${alpha.toFixed(3)})`;
     }
   }
 
-  // panel color logic (keeps previous behavior)
   function getPanelGradient(type) {
     if (type === 'total') return 'bg-gradient-to-br from-gray-800 via-gray-700 to-gray-600 shadow-lg';
     if (type === 'team') return 'bg-gradient-to-br from-slate-700 via-slate-600 to-gray-500 shadow-lg';
@@ -293,13 +345,8 @@ export default function RetailDashboard() {
     return 'rgba(249,115,22,0.85)';
   }
 
-  // summary order for right column
   const summaryOrder = [
-    { key: 'zones', title: 'TOTAL ZONES', value: (() => {
-      // unique zone chars used in products
-      const s = new Set(products.map(p => p.Zone).filter(Boolean));
-      return s.size || 3;
-    })(), gradient: 'bg-gradient-to-br from-slate-700 via-slate-600 to-gray-500' },
+    { key: 'zones', title: 'TOTAL ZONES', value: (() => { const s = new Set(products.map(p => p.Zone).filter(Boolean)); return s.size || 3; })(), gradient: 'bg-gradient-to-br from-slate-700 via-slate-600 to-gray-500' },
     { key: 'total', title: 'TOTAL ITEMS', value: totalItems, gradient: getPanelGradient('total') },
     { key: 'misplaced', title: 'MISPLACED ITEMS', value: misplacedItems.length, gradient: getPanelGradient('misplaced') },
     { key: 'team', title: 'TOTAL TEAM', value: totalTeam, gradient: getPanelGradient('team') },
@@ -326,7 +373,6 @@ export default function RetailDashboard() {
     setSelectedItem(null);
   }
 
-  // determine active panelColor & gradient to pass to AnchoredPanel
   const activePanelColor = anchoredType ? getPanelColor(anchoredType) : undefined;
   const activeGradient = anchoredType ? getPanelGradient(anchoredType) : '';
 
@@ -345,7 +391,7 @@ export default function RetailDashboard() {
                 <>
                   <img src={FLOOR_PLAN_SRC} alt="Floorplan" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
 
-                  {/* Zone overlays - use per-zone threshold state */}
+                  {/* Zone overlays - per zone threshold color */}
                   <div
                     role="button"
                     tabIndex={0}
@@ -393,7 +439,7 @@ export default function RetailDashboard() {
                 </>
               )}
 
-              {/* Anchored panel (open when selectedSummary !== 'zones') */}
+              {/* Anchored panel */}
               <AnchoredPanel
                 open={anchoredOpen}
                 type={anchoredType}
@@ -411,7 +457,7 @@ export default function RetailDashboard() {
               <ZoneModal
                 open={showZoneModal}
                 rect={zoneModalRect}
-                zoneName={selectedZone} // 'A'|'B'|'C'
+                zoneName={selectedZone}
                 products={products}
                 staff={staff}
                 onClose={closeZoneModal}
@@ -466,7 +512,7 @@ export default function RetailDashboard() {
           </div>
         </div>
 
-        {/* RIGHT-SIDE vertical stack — sticky, full column, evenly spaced */}
+        {/* RIGHT-SIDE vertical stack */}
         <div className="w-[260px] flex items-stretch">
           <div className="sticky top-6 h-[calc(100vh-96px)] w-full flex flex-col justify-between">
             {summaryOrder.map(item => (
