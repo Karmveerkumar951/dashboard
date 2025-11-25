@@ -1,4 +1,4 @@
-// RetailDashboard.jsx (auto-refresh / polling added)
+// RetailDashboard.jsx
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import StatCard from './StatCard';
 import AnchoredPanel from './AnchoredPanel';
@@ -8,11 +8,8 @@ import ProductRow from './ProductRow';
 const FLOOR_PLAN_SRC = '/assets/floorplan.png';
 const DEFAULT_PRODUCT_IMG = '/assets/placeholder-product.png';
 
-// <-- Replace this with your real API base URL
 const API_BASE = 'http://127.0.0.1:5000';
-
-// Polling interval in milliseconds (change if you want faster/slower updates)
-const POLL_INTERVAL_MS = 1000;
+const POLL_INTERVAL_MS = 500; 
 
 function useDebounce(value, delay = 160) {
   const [debounced, setDebounced] = useState(value);
@@ -33,23 +30,6 @@ function formatZoneName(zone) {
   return z;
 }
 
-// DEV code -> character mapping
-const DEV_TO_CHAR = {
-  '087C002B': 'A',
-  '087C002D': 'B',
-  '087C002E': 'C',
-  '087c002b': 'A',
-  '087c002d': 'B',
-  '087c002e': 'C',
-};
-
-function devToChar(devCode) {
-  if (devCode === null || devCode === undefined) return '';
-  const s = String(devCode || '').trim();
-  if (s.length === 1 && /[A-Z]/i.test(s)) return s.toUpperCase();
-  return DEV_TO_CHAR[s] ?? '';
-}
-
 export default function RetailDashboard() {
   const [products, setProducts] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -57,8 +37,7 @@ export default function RetailDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedQuery = useDebounce(searchQuery, 160);
 
-  // UI states
-  const [selectedSummary, setSelectedSummary] = useState('zones'); // 'zones'|'total'|'misplaced'|'team'
+  const [selectedSummary, setSelectedSummary] = useState('zones'); // 'zones' (default), 'total', 'misplaced', 'team'
   const anchoredOpen = selectedSummary !== 'zones';
   const anchoredType = anchoredOpen ? selectedSummary : null;
 
@@ -72,172 +51,132 @@ export default function RetailDashboard() {
   const teamRef = useRef(null);
   const mapContainerRef = useRef(null);
 
-  // Keep a ref to the current fetch abort controller so we can cancel on unmount/new fetch
+  // refs for fetch lifecycle
   const fetchAbortRef = useRef(null);
-  // track mounted state to avoid setState after unmount
   const mountedRef = useRef(true);
 
-  // ---------- Data loader (normalized to uppercase + DEV/Dev special case) ----------
+  // ---------- loadAll: fetch /check_all + /staff (no-store cache) ----------
   const loadAll = useCallback(async () => {
-    // If there's an ongoing fetch, let it continue; we'll abort below if needed.
-    // Create new AbortController and cancel any previous request
-    try {
-      if (fetchAbortRef.current) {
-        try { fetchAbortRef.current.abort(); } catch (e) { /* ignore */ }
-      }
-    } catch (e) {}
-
+    // create a fresh abort controller for this request; do NOT abort previous poll requests here
     const controller = new AbortController();
     fetchAbortRef.current = controller;
 
-    // set loading only if not already loading (prevents flicker)
+    // show loading if not already (prevents flicker)
     if (!loading) setLoading(true);
 
-    async function fetchStaffWithFallbacks() {
-      const attempts = [`${API_BASE}/staff`];
-      for (const url of attempts) {
-        try {
-          const res = await fetch(url, { signal: controller.signal });
-          if (!res.ok) continue;
-          const j = await res.json();
-          if (Array.isArray(j)) return j;
-          if (j && Array.isArray(j.staff)) return j.staff;
-        } catch (e) {
-          if (e.name === 'AbortError') throw e;
-          // swallow and continue
-        }
-      }
-      return [];
-    }
-
     try {
-      const [prodRes, staffArr] = await Promise.all([
-        (async () => {
-          const res = await fetch(`${API_BASE}/check_all`, { signal: controller.signal });
-          if (!res.ok) throw new Error(`API error ${res.status}`);
-          return res.json();
-        })(),
-        fetchStaffWithFallbacks()
-      ]);
+      // fetch check_all (no-store to avoid browser caching)
+      const res = await fetch(`${API_BASE}/check_all`, { signal: controller.signal, cache: 'no-store' });
+      if (!res.ok) throw new Error('API ' + res.status);
+      const json = await res.json();
+
+      // debug: inspect payload quickly while developing
+      console.debug('check_all payload', json);
 
       if (!mountedRef.current) return;
 
-      const apiJson = Array.isArray(prodRes) ? prodRes : [];
+      // Normalize JSON -> products. API returns UPPERCASE keys and DEV/DEV_DETECTED as 'A'|'B'|'C' (or null)
+      const normalizedProducts = (Array.isArray(json) ? json : []).map(p => ({
+        SKU: p.SKU,
+        Name: p.NAME,
+        Image: p.IMAGE,
+        Status: p.STATUS,
+        RFID: p.EPC,
+        Zone: p.DEV_DETECTED,   // expected 'A'|'B'|'C' or null
+        ZoneName: p.DEV,        // expected 'A'|'B'|'C' or null (product default zone)
+        LastSeen: p.LAST_SEEN,
+        Misplaced: (typeof p.ZONE_STATUS === 'boolean') ? !p.ZONE_STATUS : (p.STATUS === 'Misplaced'),
+        _rawApi: p
+      }));
 
-      const normalizedProducts = apiJson.map(p => {
-        const SKU = p.SKU ?? '';
-        const Name = p.NAME ?? '';
-        const Image = p.IMAGE ?? '';
-        const Status = p.STATUS ?? '';
-        const RFID = p.EPC ?? '';
-        const Zone = devToChar(p.DEV_DETECTED ?? '');
-        const ZoneName = devToChar((p.DEV ?? p.Dev) ?? '');
-        const LastSeen = p.LAST_SEEN ?? '';
-        const ZoneStatus = p.ZONE_STATUS;
+      // fetch staff (optional)
+      let normalizedStaff = [];
+      try {
+        const sres = await fetch(`${API_BASE}/staff`, { signal: controller.signal, cache: 'no-store' });
+        if (sres.ok) {
+          const sjson = await sres.json();
+          normalizedStaff = (Array.isArray(sjson) ? sjson : []).map(s => ({
+            id: s.ID ?? s.Id ?? s.id ?? '',
+            Name: s.NAME ?? s.Name ?? s.name ?? '',
+            RespectiveZone: s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? null,
+            In: s.IN === true || String(s.IN).toLowerCase() === 'y' || String(s.IN).toLowerCase() === 'true',
+            Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
+            Image: s.IMAGE ?? s.Image ?? s.image ?? '',
+            _raw: s
+          }));
+        }
+      } catch (err) {
+        // non-fatal: log and continue
+        console.warn('staff fetch failed', err);
+      }
 
-        const Misplaced = (typeof ZoneStatus === 'boolean') ? !ZoneStatus : (Status === 'Misplaced');
-
-        return {
-          SKU, Name, Image, Status, RFID, Zone, ZoneName, LastSeen, _rawApi: p, Misplaced
-        };
-      });
-
-      const normalizedStaff = (Array.isArray(staffArr) ? staffArr : []).map(s => {
-        const id = s.ID ?? s.Id ?? s.id ?? '';
-        const Name = s.NAME ?? s.Name ?? s.name ?? '';
-        const RespectiveZone = devToChar(s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? s.Dev ?? s.DEV ?? '') || '';
-        const InRaw = s.IN ?? s.In ?? s.in ?? 'N';
-        return {
-          id, Name, RespectiveZone,
-          In: InRaw === true || String(InRaw).toLowerCase() === 'y' || String(InRaw).toLowerCase() === 'true',
-          Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
-          Image: s.IMAGE ?? s.Image ?? s.image ?? '',
-          _raw: s
-        };
-      });
-
+      // atomic state update
       setProducts(normalizedProducts);
       setStaff(normalizedStaff);
     } catch (err) {
       if (err && err.name === 'AbortError') {
-        // fetch aborted — ignore
+        // fetch aborted (likely on unmount) — ignore
       } else {
-        console.error('Failed loading data from API', err);
-        if (mountedRef.current) {
-          setProducts([]);
-          setStaff([]);
-        }
+        console.error('Failed fetching check_all', err);
       }
     } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-      // clear controller ref if it is the one we just used
+      if (mountedRef.current) setLoading(false);
+      // clear controller if it's still ours
       if (fetchAbortRef.current === controller) fetchAbortRef.current = null;
     }
   }, [loading]);
 
-  // Initial load + polling logic
+  // ---------- polling + lifecycle ----------
   useEffect(() => {
     mountedRef.current = true;
 
-    // run immediately on mount
+    // initial load
     loadAll().catch(() => {});
 
-    // polling timer
-    let intervalId = null;
-
-    function startPolling() {
-      if (intervalId) return;
-      intervalId = setInterval(() => {
-        // only fetch when tab is visible
-        if (document.visibilityState === 'visible') {
-          loadAll().catch(() => {});
-        }
-      }, POLL_INTERVAL_MS);
-    }
-
-    function stopPolling() {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
+    // interval polling
+    let intervalId = setInterval(() => {
+      // only poll while visible
+      if (document.visibilityState === 'visible') {
+        loadAll().catch(() => {});
       }
-    }
+    }, POLL_INTERVAL_MS);
 
-    // start polling initially (but loadAll guards with visibility check in the interval)
-    startPolling();
-
-    // visibility handling: when tab becomes visible, fetch immediately and ensure polling runs; when hidden, stop polling
     function onVisibilityChange() {
       if (document.visibilityState === 'visible') {
         loadAll().catch(() => {});
-        startPolling();
+        // ensure interval running
+        if (!intervalId) {
+          intervalId = setInterval(() => {
+            if (document.visibilityState === 'visible') loadAll().catch(() => {});
+          }, POLL_INTERVAL_MS);
+        }
       } else {
-        stopPolling();
+        // when hidden, stop polling to be polite to CPU / disk
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
       }
     }
     document.addEventListener('visibilitychange', onVisibilityChange);
 
-    // also fetch when window regains focus (useful if user switched windows)
+    // also fetch on window focus (useful when switching back)
     function onFocus() {
-      if (document.visibilityState === 'visible') {
-        loadAll().catch(() => {});
-      }
+      if (document.visibilityState === 'visible') loadAll().catch(() => {});
     }
     window.addEventListener('focus', onFocus);
 
     return () => {
       mountedRef.current = false;
-      stopPolling();
+      if (intervalId) clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', onFocus);
-      // abort any ongoing fetch
-      try { if (fetchAbortRef.current) fetchAbortRef.current.abort(); } catch (e) {}
+      // abort any in-flight fetch
+      try { if (fetchAbortRef.current) fetchAbortRef.current.abort(); } catch (e) { /* ignore */ }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadAll]);
 
-  // Key handling (escape)
+  // Escape key to close panels
   useEffect(() => {
     function onKey(e) {
       if (e.key === 'Escape') {
@@ -250,13 +189,12 @@ export default function RetailDashboard() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Measure map container and zone modal rect
+  // measure zone modal rect
   useEffect(() => {
     if (!showZoneModal) {
       setZoneModalRect(null);
       return;
     }
-
     function updateRect() {
       const el = mapContainerRef.current;
       if (!el) return setZoneModalRect(null);
@@ -268,18 +206,15 @@ export default function RetailDashboard() {
         height: Math.round(r.height),
       });
     }
-
     updateRect();
     window.addEventListener('resize', updateRect);
     window.addEventListener('scroll', updateRect, true);
-
     let ro;
     const el = mapContainerRef.current;
     if (window.ResizeObserver && el) {
       ro = new ResizeObserver(updateRect);
       ro.observe(el);
     }
-
     return () => {
       window.removeEventListener('resize', updateRect);
       window.removeEventListener('scroll', updateRect, true);
@@ -287,11 +222,12 @@ export default function RetailDashboard() {
     };
   }, [showZoneModal]);
 
-  // derived values & helpers (same logic as you had)
+  // derived values
   const totalItems = products.length;
   const misplacedItems = products.filter(p => p.Misplaced);
   const totalTeam = staff.length;
 
+  // compute zone misplaced counts (expects Zone/ZoneName are single-char 'A'|'B'|'C')
   function zoneMisplacedCounts() {
     const counts = { A: 0, B: 0, C: 0 };
     products.forEach(p => {
@@ -307,15 +243,15 @@ export default function RetailDashboard() {
   const zoneCounts = zoneMisplacedCounts();
   const maxZoneCount = Math.max(1, ...Object.values(zoneCounts));
 
+  // threshold behavior (example: 5% of total, min 1)
   function thresholdForZone() {
     return Math.max(1, Math.round(totalItems * 0.05));
   }
 
+  // overlay color by threshold (green/amber/red/transparent)
   function overlayColorForCountByThreshold(count, max) {
     const thr = thresholdForZone();
-    if (!count || count === 0) {
-      return 'transparent';
-    }
+    if (!count || count === 0) return 'transparent';
     const ratio = max ? Math.min(1, count / max) : 0.2;
     if (count > thr) {
       const alpha = 0.18 + 0.5 * ratio;
@@ -391,55 +327,25 @@ export default function RetailDashboard() {
                 <>
                   <img src={FLOOR_PLAN_SRC} alt="Floorplan" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
 
-                  {/* Zone overlays - per zone threshold color */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onZoneClick('A')}
-                    className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer"
-                    style={{
-                      background: overlayColorForCountByThreshold(zoneCounts['A'] || 0, maxZoneCount),
-                      borderRadius: 12,
-                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
-                    }}
-                  >
+                  {/* Zone overlays */}
+                  <div role="button" tabIndex={0} onClick={() => onZoneClick('A')} className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer" style={{ background: overlayColorForCountByThreshold(zoneCounts['A'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
                     <div className="p-2 text-white font-semibold">Zone: {formatZoneName('A')}</div>
                     <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['A'] || 0}</div>
                   </div>
 
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onZoneClick('B')}
-                    className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer"
-                    style={{
-                      background: overlayColorForCountByThreshold(zoneCounts['B'] || 0, maxZoneCount),
-                      borderRadius: 12,
-                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
-                    }}
-                  >
+                  <div role="button" tabIndex={0} onClick={() => onZoneClick('B')} className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer" style={{ background: overlayColorForCountByThreshold(zoneCounts['B'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
                     <div className="p-2 text-white font-semibold">Zone: {formatZoneName('B')}</div>
                     <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['B'] || 0}</div>
                   </div>
 
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onZoneClick('C')}
-                    className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer"
-                    style={{
-                      background: overlayColorForCountByThreshold(zoneCounts['C'] || 0, maxZoneCount),
-                      borderRadius: 12,
-                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
-                    }}
-                  >
+                  <div role="button" tabIndex={0} onClick={() => onZoneClick('C')} className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer" style={{ background: overlayColorForCountByThreshold(zoneCounts['C'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
                     <div className="p-2 text-white font-semibold">Zone: {formatZoneName('C')}</div>
                     <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['C'] || 0}</div>
                   </div>
                 </>
               )}
 
-              {/* Anchored panel */}
+              {/* AnchoredPanel */}
               <AnchoredPanel
                 open={anchoredOpen}
                 type={anchoredType}
@@ -453,7 +359,7 @@ export default function RetailDashboard() {
                 gradientClass={activeGradient}
               />
 
-              {/* zone modal */}
+              {/* Zone modal */}
               <ZoneModal
                 open={showZoneModal}
                 rect={zoneModalRect}
@@ -465,7 +371,7 @@ export default function RetailDashboard() {
                 threshold={thresholdForZone()}
               />
 
-              {/* item details overlay */}
+              {/* Item details overlay */}
               {selectedItem && (
                 <div className="absolute inset-0 z-80" role="dialog" aria-modal="true">
                   <div className="absolute inset-0 bg-black/40" onClick={closeItemDetails} />
@@ -512,7 +418,7 @@ export default function RetailDashboard() {
           </div>
         </div>
 
-        {/* RIGHT-SIDE vertical stack */}
+        {/* RIGHT-SIDE vertical stack — sticky, full column, evenly spaced */}
         <div className="w-[260px] flex items-stretch">
           <div className="sticky top-6 h-[calc(100vh-96px)] w-full flex flex-col justify-between">
             {summaryOrder.map(item => (
