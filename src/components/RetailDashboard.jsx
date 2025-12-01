@@ -9,7 +9,7 @@ const FLOOR_PLAN_SRC = '/assets/floorplan.png';
 const DEFAULT_PRODUCT_IMG = '/assets/placeholder-product.png';
 
 const API_BASE = 'http://127.0.0.1:5000';
-const POLL_INTERVAL_MS = 500; 
+const POLL_INTERVAL_MS = 5000; 
 
 function useDebounce(value, delay = 160) {
   const [debounced, setDebounced] = useState(value);
@@ -55,114 +55,169 @@ export default function RetailDashboard() {
   const fetchAbortRef = useRef(null);
   const mountedRef = useRef(true);
 
-  // ---------- loadAll: fetch /check_all + /staff (no-store cache) ----------
-  const loadAll = useCallback(async () => {
-    // create a fresh abort controller for this request; do NOT abort previous poll requests here
+  // ---------- helpers to normalize APIs ----------
+  function normalizeProductFromProductsApi(p) {
+    return {
+      SKU: p.SKU ?? p.sku ?? p.Sku,
+      Name: p.NAME ?? p.Name ?? p.name ?? '',
+      Image: p.IMAGE ?? p.Image ?? p.image ?? null,
+      Status: p.STATUS ?? p.Status ?? p.status ?? null,
+      RFID: p.EPC ?? p.RFID ?? p.rfid ?? null,
+      Zone: p.DEV_DETECTED ?? p.zone ?? p.Zone ?? null,
+      ZoneName: p.DEV ?? p.ZoneName ?? p.defaultZone ?? null,
+      LastSeen: p.LAST_SEEN ?? p.LastSeen ?? null,
+      Misplaced: (typeof p.ZONE_STATUS === 'boolean') ? !p.ZONE_STATUS : (p.STATUS === 'Misplaced'),
+      _rawApi: p
+    };
+  }
+
+  function normalizeStaff(s) {
+    return {
+      id: s.ID ?? s.Id ?? s.id ?? '',
+      Name: s.NAME ?? s.Name ?? s.name ?? '',
+      RespectiveZone: s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? null,
+      In: s.IN === true || String(s.IN).toLowerCase() === 'y' || String(s.IN).toLowerCase() === 'true',
+      Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
+      Image: s.IMAGE ?? s.Image ?? s.image ?? '',
+      _raw: s
+    };
+  }
+
+  // ---------- fetch once: products + staff (no polling) ----------
+  const fetchProductsAndStaffOnce = useCallback(async () => {
     const controller = new AbortController();
     fetchAbortRef.current = controller;
-
-    // show loading if not already (prevents flicker)
-    if (!loading) setLoading(true);
+    setLoading(true);
 
     try {
-      // fetch check_all (no-store to avoid browser caching)
-      const res = await fetch(`${API_BASE}/check_all`, { signal: controller.signal, cache: 'no-store' });
-      if (!res.ok) throw new Error('API ' + res.status);
-      const json = await res.json();
+      // try products endpoint first
+      try {
+        const pres = await fetch(`${API_BASE}/products`, { signal: controller.signal, cache: 'no-store' });
+        if (pres.ok) {
+          const pjson = await pres.json();
+          const normalized = (Array.isArray(pjson) ? pjson : []).map(normalizeProductFromProductsApi);
+          if (!mountedRef.current) return;
+          setProducts(normalized);
+        }
+      } catch (err) {
+        console.warn('products fetch failed', err);
+      }
 
-      // debug: inspect payload quickly while developing
-      console.debug('check_all payload', json);
-
-      if (!mountedRef.current) return;
-
-      // Normalize JSON -> products. API returns UPPERCASE keys and DEV/DEV_DETECTED as 'A'|'B'|'C' (or null)
-      const normalizedProducts = (Array.isArray(json) ? json : []).map(p => ({
-        SKU: p.SKU,
-        Name: p.NAME,
-        Image: p.IMAGE,
-        Status: p.STATUS,
-        RFID: p.EPC,
-        Zone: p.DEV_DETECTED,   // expected 'A'|'B'|'C' or null
-        ZoneName: p.DEV,        // expected 'A'|'B'|'C' or null (product default zone)
-        LastSeen: p.LAST_SEEN,
-        Misplaced: (typeof p.ZONE_STATUS === 'boolean') ? !p.ZONE_STATUS : (p.STATUS === 'Misplaced'),
-        _rawApi: p
-      }));
-
-      // fetch staff (optional)
-      let normalizedStaff = [];
+      // fetch staff once
       try {
         const sres = await fetch(`${API_BASE}/staff`, { signal: controller.signal, cache: 'no-store' });
         if (sres.ok) {
           const sjson = await sres.json();
-          normalizedStaff = (Array.isArray(sjson) ? sjson : []).map(s => ({
-            id: s.ID ?? s.Id ?? s.id ?? '',
-            Name: s.NAME ?? s.Name ?? s.name ?? '',
-            RespectiveZone: s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? null,
-            In: s.IN === true || String(s.IN).toLowerCase() === 'y' || String(s.IN).toLowerCase() === 'true',
-            Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
-            Image: s.IMAGE ?? s.Image ?? s.image ?? '',
-            _raw: s
-          }));
+          if (!mountedRef.current) return;
+          setStaff((Array.isArray(sjson) ? sjson : []).map(normalizeStaff));
         }
       } catch (err) {
-        // non-fatal: log and continue
         console.warn('staff fetch failed', err);
       }
+    } finally {
+      if (mountedRef.current) setLoading(false);
+      if (fetchAbortRef.current === controller) fetchAbortRef.current = null;
+    }
+  }, []);
 
-      // atomic state update
-      setProducts(normalizedProducts);
-      setStaff(normalizedStaff);
+  // ---------- poll: check_all only (merge updates into existing products) ----------
+  const pollCheckAll = useCallback(async () => {
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+
+    try {
+      const res = await fetch(`${API_BASE}/check_all`, { signal: controller.signal, cache: 'no-store' });
+      if (!res.ok) throw new Error('API ' + res.status);
+      const json = await res.json();
+      if (!mountedRef.current) return;
+
+      setProducts(prevProducts => {
+        const byRfid = new Map();
+        const bySku = new Map();
+        prevProducts.forEach(p => {
+          if (p.RFID) byRfid.set(String(p.RFID), p);
+          if (p.SKU) bySku.set(String(p.SKU), p);
+        });
+
+        const updated = prevProducts.slice(); // shallow copy
+
+        (Array.isArray(json) ? json : []).forEach(p => {
+          const epc = p.EPC ?? p.RFID ?? null;
+          const detectedZone = p.DEV_DETECTED ?? p.DevDetected ?? p.Dev ?? null;
+          const defaultZone = p.DEV ?? p.DEVICE ?? p.Dev ?? null;
+          const lastSeen = p.LAST_SEEN ?? p.Time ?? p.LastSeen ?? null;
+          const zoneStatus = p.ZONE_STATUS;
+          const isMisplaced = (typeof zoneStatus === 'boolean') ? !zoneStatus : (p.STATUS === 'Misplaced');
+
+          let target = null;
+          if (epc && byRfid.has(String(epc))) target = byRfid.get(String(epc));
+          if (!target && p.SKU && bySku.has(String(p.SKU))) target = bySku.get(String(p.SKU));
+
+          if (target) {
+            const idx = updated.findIndex(x => (x === target) || (x.RFID && target.RFID && x.RFID === target.RFID) || (x.SKU && target.SKU && x.SKU === target.SKU));
+            if (idx >= 0) {
+              const copy = { ...updated[idx] };
+              copy.Zone = detectedZone ?? copy.Zone;
+              copy.ZoneName = defaultZone ?? copy.ZoneName;
+              copy.LastSeen = lastSeen ?? copy.LastSeen;
+              copy.Misplaced = typeof zoneStatus !== 'undefined' ? isMisplaced : copy.Misplaced;
+              copy._rawApi = p;
+              updated[idx] = copy;
+            }
+          } else {
+            // append a lightweight entry only if some identifying info exists
+            const newItem = normalizeProductFromProductsApi(p);
+            if (newItem.SKU || newItem.RFID || newItem.Name) updated.push(newItem);
+          }
+        });
+
+        return updated;
+      });
+
     } catch (err) {
       if (err && err.name === 'AbortError') {
-        // fetch aborted (likely on unmount) — ignore
+        // ignore
       } else {
         console.error('Failed fetching check_all', err);
       }
     } finally {
-      if (mountedRef.current) setLoading(false);
-      // clear controller if it's still ours
       if (fetchAbortRef.current === controller) fetchAbortRef.current = null;
     }
-  }, [loading]);
+  }, []);
 
   // ---------- polling + lifecycle ----------
   useEffect(() => {
     mountedRef.current = true;
 
-    // initial load
-    loadAll().catch(() => {});
+    // initial one-time fetch for products + staff
+    fetchProductsAndStaffOnce().catch(() => {});
 
-    // interval polling
+    // immediate poll for check_all (so zones/status update quickly)
+    pollCheckAll().catch(() => {});
+
+    // interval polling only for check_all
     let intervalId = setInterval(() => {
-      // only poll while visible
       if (document.visibilityState === 'visible') {
-        loadAll().catch(() => {});
+        pollCheckAll().catch(() => {});
       }
     }, POLL_INTERVAL_MS);
 
     function onVisibilityChange() {
       if (document.visibilityState === 'visible') {
-        loadAll().catch(() => {});
-        // ensure interval running
+        pollCheckAll().catch(() => {});
         if (!intervalId) {
           intervalId = setInterval(() => {
-            if (document.visibilityState === 'visible') loadAll().catch(() => {});
+            if (document.visibilityState === 'visible') pollCheckAll().catch(() => {});
           }, POLL_INTERVAL_MS);
         }
       } else {
-        // when hidden, stop polling to be polite to CPU / disk
-        if (intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
+        if (intervalId) { clearInterval(intervalId); intervalId = null; }
       }
     }
     document.addEventListener('visibilitychange', onVisibilityChange);
 
-    // also fetch on window focus (useful when switching back)
     function onFocus() {
-      if (document.visibilityState === 'visible') loadAll().catch(() => {});
+      if (document.visibilityState === 'visible') pollCheckAll().catch(() => {});
     }
     window.addEventListener('focus', onFocus);
 
@@ -171,10 +226,9 @@ export default function RetailDashboard() {
       if (intervalId) clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', onFocus);
-      // abort any in-flight fetch
       try { if (fetchAbortRef.current) fetchAbortRef.current.abort(); } catch (e) { /* ignore */ }
     };
-  }, [loadAll]);
+  }, [fetchProductsAndStaffOnce, pollCheckAll]);
 
   // Escape key to close panels
   useEffect(() => {
