@@ -1,3 +1,4 @@
+// ProductRow.jsx
 import React from 'react';
 
 const DEFAULT_PRODUCT_IMG = '/assets/placeholder-product.png';
@@ -19,13 +20,15 @@ function stockLabel(stock) {
   return { text: `${n}`, className: '' };
 }
 
+/** tolerant formatter: accepts single-char or full name */
 function formatZoneName(zone) {
   if (!zone) return '—';
-  const z = String(zone);
-  if (z.toLowerCase().startsWith('zone ')) {
-    return z.slice(5).trim();
+  const s = String(zone).trim();
+  if (s.length === 1) {
+    const map = { A: "Men's Wear", B: "Women's Wear", C: "Trial Room" };
+    return map[s.toUpperCase()] || s;
   }
-  return z;
+  return s;
 }
 
 export default function ProductRow({ p, onClick }) {

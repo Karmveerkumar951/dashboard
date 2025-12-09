@@ -1,3 +1,4 @@
+// AnchoredPanel.jsx
 import React, { useEffect, useState } from 'react';
 import ProductRow from './ProductRow';
 
@@ -155,8 +156,8 @@ export default function AnchoredPanel({
                       }}
                       className={`px-3 py-2 cursor-pointer flex items-center gap-3 ${idx === suggestionIndex ? 'bg-gray-100' : ''}`}
                     >
-                      <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/products/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : `/assets/products/${s.SKU}.jpg`)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=(s.id?DEFAULT_STAFF_IMG:DEFAULT_PRODUCT_IMG) }} />
-                      <div className="flex-1 text-sm text-gray-800">{s.Name || s.SKU || s.id || ''}</div>
+                      <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/staff/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : DEFAULT_STAFF_IMG)} alt={s.Name || s.id} className="w-8 h-8 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_STAFF_IMG }} />
+                      <div className="flex-1 text-sm text-gray-800">{s.Name || s.id || ''}</div>
                     </li>
                   ))}
                 </ul>
@@ -214,34 +215,68 @@ export default function AnchoredPanel({
                           />
                           <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${s.In ? 'bg-green-500' : 'bg-gray-300'}`} />
                         </div>
+
                         <div className="text-left">
-                          <div className="font-semibold text-gray-900">{s.Name}</div>
-                          <div className="text-xs text-gray-500">{s.Title || s.Role || 'Project Manager'}</div>
+                          <div className="flex items-baseline gap-2">
+                            <div className="font-semibold text-gray-900">{s.Name}</div>
+                            {s.id && <div className="text-xs text-gray-500">• {s.id}</div>}
+                          </div>
+
+                          {/* Title/Role if present in staff JSON */}
+                          { (s.Title || s.Role) && <div className="text-xs text-gray-500">{s.Title || s.Role}</div> }
                         </div>
                       </div>
+
                       <div className="text-gray-400">⋯</div>
                     </div>
 
-                    <div className="mt-4 bg-gray-50 rounded p-3 text-sm text-gray-700">
+                    <div className="mt-4 bg-gray-50 rounded p-3 text-sm text-gray-700 space-y-2">
                       <div className="flex justify-between">
-                        <div className="text-xs text-gray-500">Department</div>
-                        <div className="text-xs font-medium">{s.Department || s.Team || '—'}</div>
+                        <div className="text-xs text-gray-500">Assigned zone</div>
+                        <div className="text-xs font-medium">{s.RespectiveZone || s.RespectiveZoneName || s.Zone || '—'}</div>
                       </div>
 
-                      <div className="mt-2 flex justify-between">
-                        <div className="text-xs text-gray-500">Hired Date</div>
-                        <div className="text-xs font-medium">{s.HireDate || s.HiredDate || '—'}</div>
+                      <div className="flex justify-between">
+                        <div className="text-xs text-gray-500">In store</div>
+                        <div className="text-xs font-medium">{s.In ? 'In' : 'Out'}</div>
                       </div>
 
-                      <div className="mt-3 flex items-center gap-3 text-xs text-gray-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8.5v7A2.5 2.5 0 0 0 5.5 18h13A2.5 2.5 0 0 0 21 15.5v-7A2.5 2.5 0 0 0 18.5 6h-13A2.5 2.5 0 0 0 3 8.5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 8.5l-9 6-9-6" /></svg>
-                        <div className="truncate">{s.Email || s.EmailAddress || s.email || '—'}</div>
+                      <div className="flex justify-between">
+                        <div className="text-xs text-gray-500">Phone</div>
+                        <div className="text-xs font-medium">{s.Phone || s.PHONE || '—'}</div>
                       </div>
 
-                      <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
+                      {/* optional fields if available in staff JSON */}
+                      { (s.Department || s.Team) && (
+                        <div className="flex justify-between">
+                          <div className="text-xs text-gray-500">Department</div>
+                          <div className="text-xs font-medium">{s.Department || s.Team}</div>
+                        </div>
+                      )}
+
+                      { (s.HireDate || s.HiredDate) && (
+                        <div className="flex justify-between">
+                          <div className="text-xs text-gray-500">Hired Date</div>
+                          <div className="text-xs font-medium">{s.HireDate || s.HiredDate}</div>
+                        </div>
+                      )}
+
+                      { (s.Email || s.EmailAddress || s.email) && (
+                        <div className="flex items-center gap-2 text-xs text-gray-600">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8.5v7A2.5 2.5 0 0 0 5.5 18h13A2.5 2.5 0 0 0 21 15.5v-7A2.5 2.5 0 0 0 18.5 6h-13A2.5 2.5 0 0 0 3 8.5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 8.5l-9 6-9-6" /></svg>
+                          <div className="truncate">{s.Email || s.EmailAddress || s.email}</div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 text-xs text-gray-600">
                         <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M22 16.92V21a1 1 0 0 1-1.11 1 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 2 3.11 1 1 0 0 1 3 2h4.09a1 1 0 0 1 1 .75c.12.73.33 1.44.62 2.11a1 1 0 0 1-.24 1.04L7.7 8.7a16 16 0 0 0 6 6l1.78-1.78a1 1 0 0 1 1.04-.24c.67.29 1.38.5 2.11.62a1 1 0 0 1 .75 1z" /></svg>
-                        <div className="truncate">{s.Phone || '—'}</div>
+                        <div className="truncate">{s.Phone || s.PHONE || '—'}</div>
                       </div>
+                    </div>
+
+                    {/* click to open more staff details */}
+                    <div className="mt-3 flex justify-end">
+                      <button onClick={() => onOpenItem && onOpenItem(s)} className="px-3 py-1 border rounded text-sm">View</button>
                     </div>
                   </div>
                 ))}

@@ -20,15 +20,162 @@ function useDebounce(value, delay = 160) {
   return debounced;
 }
 
+/** Zone constants — full readable names used internally everywhere */
+const ZONES = {
+  A: "Men's Wear",
+  B: "Women's Wear",
+  C: "Trial Room"
+};
+
+/** Map a zone value (single-char or full name) -> full readable name */
+function mapZoneToName(zone) {
+  if (!zone) return null;
+  if (typeof zone === 'string' && zone.trim().length === 1) {
+    const k = zone.trim().toUpperCase();
+    return ZONES[k] || zone;
+  }
+  // already a string (maybe full name) -> return as-is trimmed
+  return String(zone).trim();
+}
+
+/** Keep a tolerant formatZoneName used by UI components */
 function formatZoneName(zone) {
   if (!zone) return '—';
-  if (typeof zone === 'string' && zone.length === 1) return zone;
-  const z = String(zone);
-  if (z.toLowerCase().startsWith('zone ')) {
-    return z.slice(5).trim();
-  }
-  return z;
+  return mapZoneToName(zone) || '—';
 }
+
+/**
+ * Helper visual components for overlays
+ *
+ * Quadrant: shows a quarter-circle (created by a large circle placed so
+ * only one quadrant is visible via overflow:hidden). This avoids pseudo-elements and SVG.
+ *
+ * HalfCircle: implemented using SVG to ensure consistent color and crisp semicircle edges.
+ *
+ * Both accept inline style overrides so you can tweak position/size quickly.
+ */
+
+function Quadrant({ children, count, color, onClick, className = '', style = {}, corner = 'top-left' }) {
+  // corner: 'top-left' | 'top-right'
+  // parent is the overlay rectangle that masks a big circle so only a quadrant shows
+  // inner circle is 200% width/height and positioned so its center aligns with chosen corner
+  const innerCommon = {
+    position: 'absolute',
+    width: '200%',
+    height: '200%',
+    borderRadius: '50%',
+    // make sure the circle covers parent fully
+    transform: 'translateZ(0)'
+  };
+
+  // position inner circle so its center is at chosen corner:
+  // - for top-left: left:-100% top:-100%  (center at parent top-left)
+  // - for top-right: left:0 top:-100%     (center at parent top-right)
+  const innerPos = corner === 'top-right'
+    ? { left: '0%', top: '-100%' }
+    : { left: '-100%', top: '-100%' };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      className={className}
+      style={{
+        position: 'absolute',
+        overflow: 'hidden',
+        borderRadius: 12,
+        ...style
+      }}
+    >
+      {/* big circle positioned so only a quadrant shows inside parent */}
+      <div style={{ ...innerCommon, ...innerPos, background: color }} />
+
+      {/* overlay content (name / count) positioned above the quadrant */}
+      <div style={{ position: 'absolute', inset: 0, padding: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', color: 'white', fontWeight: 600 }}>
+        <div>{children}</div>
+        <div style={{ background: 'rgba(0,0,0,0.4)', padding: '4px 8px', borderRadius: 8, fontSize: 12 }}>{count ?? 0}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * SVG-based HalfCircle (right-half semicircle).
+ * - style param controls positioning/size (left/right/top/bottom/width/height).
+ * - color should accept rgba(...) or any CSS color string.
+ */
+function HalfCircle({ children, count, color = 'rgba(220,38,38,0.18)', onClick, className = '', style = {} }) {
+  // If color is 'transparent' or falsy, don't draw fill
+  const fillColor = (!color || color === 'transparent') ? 'transparent' : color;
+
+  // Original path draws a right-facing semicircle
+  const pathD = 'M50 0 A50 50 0 0 1 50 100 L50 100 L50 0 Z';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      className={className}
+      style={{
+        position: 'absolute',
+        overflow: 'visible',
+        pointerEvents: 'auto',
+        ...style
+      }}
+    >
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          pointerEvents: 'none'
+        }}
+      >
+        {/* Rotate semicircle 90° anticlockwise around the center (50,50) */}
+        <path
+          d={pathD}
+          fill={fillColor}
+          transform="rotate(-90 50 50)"
+        />
+      </svg>
+
+      {/* Overlay content */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          padding: 12,
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          color: 'white',
+          fontWeight: 600,
+          pointerEvents: 'auto'
+        }}
+      >
+        <div style={{ textShadow: '0 1px 2px rgba(0,0,0,0.45)' }}>{children}</div>
+        <div
+          style={{
+            background: 'rgba(0,0,0,0.45)',
+            padding: '4px 8px',
+            borderRadius: 8,
+            fontSize: 12
+          }}
+        >
+          {count ?? 0}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 export default function RetailDashboard() {
   const [products, setProducts] = useState([]);
@@ -41,7 +188,7 @@ export default function RetailDashboard() {
   const anchoredOpen = selectedSummary !== 'zones';
   const anchoredType = anchoredOpen ? selectedSummary : null;
 
-  const [selectedZone, setSelectedZone] = useState(null); // 'A'|'B'|'C'
+  const [selectedZone, setSelectedZone] = useState(null); // now will store full zone name
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [zoneModalRect, setZoneModalRect] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -57,14 +204,18 @@ export default function RetailDashboard() {
 
   // ---------- helpers to normalize APIs ----------
   function normalizeProductFromProductsApi(p) {
+    const detectedRaw = p.DEV_DETECTED ?? p.DevDetected ?? p.Dev ?? p.zone ?? p.Zone ?? null;
+    const defaultRaw = p.DEV ?? p.DEVICE ?? p.Dev ?? p.ZoneName ?? p.defaultZone ?? null;
+
     return {
       SKU: p.SKU ?? p.sku ?? p.Sku,
       Name: p.NAME ?? p.Name ?? p.name ?? '',
       Image: p.IMAGE ?? p.Image ?? p.image ?? null,
       Status: p.STATUS ?? p.Status ?? p.status ?? null,
       RFID: p.EPC ?? p.RFID ?? p.rfid ?? null,
-      Zone: p.DEV_DETECTED ?? p.zone ?? p.Zone ?? null,
-      ZoneName: p.DEV ?? p.ZoneName ?? p.defaultZone ?? null,
+      // store full readable zone names
+      Zone: mapZoneToName(detectedRaw),
+      ZoneName: mapZoneToName(defaultRaw),
       LastSeen: p.LAST_SEEN ?? p.LastSeen ?? null,
       Misplaced: (typeof p.ZONE_STATUS === 'boolean') ? !p.ZONE_STATUS : (p.STATUS === 'Misplaced'),
       _rawApi: p
@@ -72,10 +223,16 @@ export default function RetailDashboard() {
   }
 
   function normalizeStaff(s) {
+    const rawZone = s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? null;
+    const zoneName = mapZoneToName(rawZone);
+
     return {
       id: s.ID ?? s.Id ?? s.id ?? '',
       Name: s.NAME ?? s.Name ?? s.name ?? '',
-      RespectiveZone: s.RESPECTIVEZONE ?? s.RespectiveZone ?? s.Zone ?? s.zone ?? null,
+      // store the full zone name so comparisons use names
+      RespectiveZone: zoneName,
+      // keep original human readable value (if distinct) for display if needed
+      RespectiveZoneName: rawZone ?? zoneName,
       In: s.IN === true || String(s.IN).toLowerCase() === 'y' || String(s.IN).toLowerCase() === 'true',
       Phone: s.PHONE ?? s.Phone ?? s.phone ?? '',
       Image: s.IMAGE ?? s.Image ?? s.image ?? '',
@@ -143,8 +300,10 @@ export default function RetailDashboard() {
 
         (Array.isArray(json) ? json : []).forEach(p => {
           const epc = p.EPC ?? p.RFID ?? null;
-          const detectedZone = p.DEV_DETECTED ?? p.DevDetected ?? p.Dev ?? null;
-          const defaultZone = p.DEV ?? p.DEVICE ?? p.Dev ?? null;
+          const detectedRaw = p.DEV_DETECTED ?? p.DevDetected ?? p.Dev ?? p.zone ?? p.Zone ?? null;
+          const defaultRaw = p.DEV ?? p.DEVICE ?? p.Dev ?? p.ZoneName ?? p.defaultZone ?? null;
+          const detectedZone = mapZoneToName(detectedRaw);
+          const defaultZone = mapZoneToName(defaultRaw);
           const lastSeen = p.LAST_SEEN ?? p.Time ?? p.LastSeen ?? null;
           const zoneStatus = p.ZONE_STATUS;
           const isMisplaced = (typeof zoneStatus === 'boolean') ? !zoneStatus : (p.STATUS === 'Misplaced');
@@ -281,9 +440,12 @@ export default function RetailDashboard() {
   const misplacedItems = products.filter(p => p.Misplaced);
   const totalTeam = staff.length;
 
-  // compute zone misplaced counts (expects Zone/ZoneName are single-char 'A'|'B'|'C')
+  // compute zone misplaced counts using full zone names
   function zoneMisplacedCounts() {
-    const counts = { A: 0, B: 0, C: 0 };
+    const counts = {};
+    // initialize with known zones (so overlays show even when zero)
+    Object.values(ZONES).forEach(name => counts[name] = 0);
+
     products.forEach(p => {
       const current = p.Zone;
       const defaultZone = p.ZoneName;
@@ -346,8 +508,8 @@ export default function RetailDashboard() {
     setSelectedSummary(key);
   }
 
-  function onZoneClick(zoneChar) {
-    setSelectedZone(zoneChar);
+  function onZoneClick(zoneName) {
+    setSelectedZone(zoneName);
     setShowZoneModal(true);
   }
   function closeZoneModal() {
@@ -381,21 +543,62 @@ export default function RetailDashboard() {
                 <>
                   <img src={FLOOR_PLAN_SRC} alt="Floorplan" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
 
-                  {/* Zone overlays */}
-                  <div role="button" tabIndex={0} onClick={() => onZoneClick('A')} className="absolute left-6 top-12 w-[32%] h-[46%] cursor-pointer" style={{ background: overlayColorForCountByThreshold(zoneCounts['A'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
-                    <div className="p-2 text-white font-semibold">Zone: {formatZoneName('A')}</div>
-                    <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['A'] || 0}</div>
-                  </div>
+                  {/* === TOP-LEFT quadrant for Men's Wear ===
+                      Positioning below uses the same layout proportions as previous rectangle:
+                      adjust the width/height/left/top values to fine-tune appearance. */}
+                  <Quadrant
+                    corner="top-left"
+                    color={overlayColorForCountByThreshold(zoneCounts[ZONES.A] || 0, maxZoneCount)}
+                    onClick={() => onZoneClick(ZONES.A)}
+                    count={zoneCounts[ZONES.A] || 0}
+                    className="cursor-pointer"
+                    style={{
+                      left: '6px',
+                      top: '48px',           // corresponds to previous top-12 (adjust if needed)
+                      width: '32%',
+                      height: '46%',
+                      // keep same boxShadow feel as before
+                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
+                    }}
+                  >
+                    {ZONES.A}
+                  </Quadrant>
 
-                  <div role="button" tabIndex={0} onClick={() => onZoneClick('B')} className="absolute right-6 top-12 w-[32%] h-[46%] cursor-pointer" style={{ background: overlayColorForCountByThreshold(zoneCounts['B'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
-                    <div className="p-2 text-white font-semibold">Zone: {formatZoneName('B')}</div>
-                    <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['B'] || 0}</div>
-                  </div>
+                  {/* === TOP-RIGHT quadrant for Women's Wear === */}
+                  <Quadrant
+                    corner="top-right"
+                    color={overlayColorForCountByThreshold(zoneCounts[ZONES.B] || 0, maxZoneCount)}
+                    onClick={() => onZoneClick(ZONES.B)}
+                    count={zoneCounts[ZONES.B] || 0}
+                    className="cursor-pointer"
+                    style={{
+                      right: '6px',
+                      top: '48px',
+                      width: '32%',
+                      height: '46%',
+                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
+                    }}
+                  >
+                    {ZONES.B}
+                  </Quadrant>
 
-                  <div role="button" tabIndex={0} onClick={() => onZoneClick('C')} className="absolute left-[34%] bottom-6 w-[32%] h-[28%] cursor-pointer" style={{ background: overlayColorForCountByThreshold(zoneCounts['C'] || 0, maxZoneCount), borderRadius: 12, boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)' }}>
-                    <div className="p-2 text-white font-semibold">Zone: {formatZoneName('C')}</div>
-                    <div className="absolute right-2 top-2 bg-black/40 text-white text-xs px-2 py-1 rounded">{zoneCounts['C'] || 0}</div>
-                  </div>
+                  {/* === BOTTOM half-circle for Trial Room ===
+                        Positioned near the bottom center. Adjust left/width/height to tune curvature. */}
+                  <HalfCircle
+                    color={overlayColorForCountByThreshold(zoneCounts[ZONES.C] || 0, maxZoneCount)}
+                    onClick={() => onZoneClick(ZONES.C)}
+                    count={zoneCounts[ZONES.C] || 0}
+                    className="cursor-pointer"
+                    style={{
+                      left: '34%',
+                      bottom: '24px',       // corresponds to previous bottom-6 (adjust if needed)
+                      width: '32%',
+                      height: '28%',
+                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
+                    }}
+                  >
+                    {ZONES.C}
+                  </HalfCircle>
                 </>
               )}
 

@@ -1,3 +1,4 @@
+// ZoneModal.jsx
 import React from 'react';
 
 const DEFAULT_PRODUCT_IMG = '/assets/placeholder-product.png';
@@ -5,10 +6,13 @@ const DEFAULT_STAFF_IMG = '/assets/placeholder-staff.png';
 
 function formatZoneName(zoneChar) {
   if (!zoneChar) return '—';
-  if (typeof zoneChar === 'string' && zoneChar.length === 1) return zoneChar;
-  const z = String(zoneChar);
-  if (z.toLowerCase().startsWith('zone ')) return z.slice(5).trim();
-  return z;
+  // if single char map to full name, otherwise return as-is
+  const s = String(zoneChar).trim();
+  if (s.length === 1) {
+    const map = { A: "Men's Wear", B: "Women's Wear", C: "Trial Room" };
+    return map[s.toUpperCase()] || s;
+  }
+  return s;
 }
 
 function staffImageUrl(s) {
@@ -21,11 +25,11 @@ function staffImageUrl(s) {
 export default function ZoneModal({ open, rect, zoneName, products = [], staff = [], onClose, onOpenItem, threshold = 1 }) {
   if (!open || !rect) return null;
 
-  const currentZone = zoneName; // expects 'A'|'B'|'C'
+  const currentZone = zoneName; // now the full readable name, e.g. "Men's Wear"
 
   const itemsInSelectedZone = currentZone
     ? products.filter(it => {
-        // it.Zone is normalized to the single-character dev char
+        // it.Zone now stores full zone names (normalized)
         return it.Zone === currentZone;
       })
     : [];
@@ -39,7 +43,7 @@ export default function ZoneModal({ open, rect, zoneName, products = [], staff =
     : [];
 
   const employeesInSelectedZone = currentZone
-    ? staff.filter(s => (s.RespectiveZone === currentZone) || (s.ZoneName === currentZone) || (s.Zone === currentZone))
+    ? staff.filter(s => (s.RespectiveZone === currentZone) || (s.RespectiveZoneName === currentZone) || (s.Zone === currentZone))
     : [];
 
   const totalInZoneCount = itemsInSelectedZone.length;
@@ -105,7 +109,7 @@ export default function ZoneModal({ open, rect, zoneName, products = [], staff =
                       <img src={s.Image ? (s.Image.startsWith('/') ? s.Image : `/assets/staff/${s.Image}`) : (s.id ? `/assets/staff/${s.id}.jpg` : DEFAULT_STAFF_IMG)} alt={s.Name} className="w-12 h-12 rounded-full object-cover" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_STAFF_IMG }} />
                       <div>
                         <div className="font-medium">{s.Name}</div>
-                        <div className="text-xs text-gray-500">Zone: {formatZoneName(s.RespectiveZone || s.ZoneName || '—')}</div>
+                        <div className="text-xs text-gray-500">Zone: {formatZoneName(s.RespectiveZone || s.RespectiveZoneName || '—')}</div>
                         <div className="text-xs text-gray-500">In store: {String(s.In)}</div>
                       </div>
                     </div>

@@ -1,3 +1,4 @@
+// StatCard.jsx
 import React from 'react';
 
 const StatCard = React.forwardRef(function StatCard(
