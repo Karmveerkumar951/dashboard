@@ -2,7 +2,7 @@
 import React from 'react';
 
 const StatCard = React.forwardRef(function StatCard(
-  { title, value, onClick, gradient = '', shadow = '', ariaLabel, active = false },
+  { title, value, onClick, gradient = '', ariaLabel, active = false },
   ref
 ) {
   return (
@@ -10,9 +10,9 @@ const StatCard = React.forwardRef(function StatCard(
       ref={ref}
       onClick={onClick}
       aria-label={ariaLabel}
-      className={`rounded-md px-6 py-4 min-w-[200px] text-left flex items-center justify-between text-white border border-white/8 focus:outline-none transform transition-transform
-        ${gradient} ${shadow}
-        ${active ? 'ring-2 ring-white/30 scale-[1.01]' : 'hover:scale-[1.01]'}
+      className={`rounded-md px-6 py-4 min-w-[200px] text-left flex items-center justify-between text-white border border-white/10 focus:outline-none
+        ${gradient}
+        ${active ? 'border-white/50' : ''}
       `}
       style={{ minHeight: 64 }}
     >

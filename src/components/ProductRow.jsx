@@ -44,7 +44,7 @@ export default function ProductRow({ p, onClick }) {
   const imgSrc = p.Image ? (p.Image.startsWith('/') ? p.Image : `/assets/products/${p.Image}`) : (p.SKU ? `/assets/products/${p.SKU}.jpg` : DEFAULT_PRODUCT_IMG);
 
   return (
-    <div onClick={() => onClick && onClick(p)} className="w-full flex items-center gap-4 px-3 py-3 border-b bg-white/6 hover:bg-white/8 cursor-pointer">
+    <div onClick={() => onClick && onClick(p)} className="w-full flex items-center gap-4 px-3 py-3 border-b bg-white/5 cursor-pointer">
       <div className="flex items-center gap-3 min-w-[260px]">
         <img src={imgSrc} alt={name} className="w-12 h-12 object-cover rounded" onError={(e)=>{ e.currentTarget.onerror=null; e.currentTarget.src=DEFAULT_PRODUCT_IMG }} />
         <div>

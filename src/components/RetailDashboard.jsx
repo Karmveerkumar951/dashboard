@@ -44,16 +44,6 @@ function formatZoneName(zone) {
   return mapZoneToName(zone) || '—';
 }
 
-/**
- * Helper visual components for overlays
- *
- * Quadrant: shows a quarter-circle (created by a large circle placed so
- * only one quadrant is visible via overflow:hidden). This avoids pseudo-elements and SVG.
- *
- * HalfCircle: implemented using SVG to ensure consistent color and crisp semicircle edges.
- *
- * Both accept inline style overrides so you can tweak position/size quickly.
- */
 
 function Quadrant({ children, count, color, onClick, className = '', style = {}, corner = 'top-left' }) {
   // corner: 'top-left' | 'top-right'
@@ -482,23 +472,23 @@ export default function RetailDashboard() {
   }
 
   function getPanelGradient(type) {
-    if (type === 'total') return 'bg-gradient-to-br from-gray-800 via-gray-700 to-gray-600 shadow-lg';
-    if (type === 'team') return 'bg-gradient-to-br from-slate-700 via-slate-600 to-gray-500 shadow-lg';
-    if (misplacedItems.length === 0) return 'bg-gradient-to-br from-green-500 via-emerald-500 to-teal-500 shadow-2xl';
-    if (misplacedItems.length >= Math.max(1, Math.round(totalItems * 0.2))) return 'bg-gradient-to-br from-red-500 via-rose-600 to-pink-600 shadow-2xl';
-    return 'bg-gradient-to-br from-amber-400 via-yellow-500 to-orange-500 shadow-2xl';
+    if (type === 'total') return 'bg-gray-800';
+    if (type === 'team') return 'bg-slate-700';
+    if (misplacedItems.length === 0) return 'bg-green-600';
+    if (misplacedItems.length >= Math.max(1, Math.round(totalItems * 0.2))) return 'bg-red-600';
+    return 'bg-amber-500';
   }
 
   function getPanelColor(type) {
-    if (type === 'total') return 'rgba(55,65,81,0.88)';
-    if (type === 'team') return 'rgba(51,65,85,0.88)';
-    if (misplacedItems.length === 0) return 'rgba(22,163,74,0.85)';
-    if (misplacedItems.length >= Math.max(1, Math.round(totalItems * 0.2))) return 'rgba(220,38,38,0.85)';
-    return 'rgba(249,115,22,0.85)';
+    if (type === 'total') return 'rgba(55,65,81,1)';
+    if (type === 'team') return 'rgba(51,65,85,1)';
+    if (misplacedItems.length === 0) return 'rgba(22,163,74,1)';
+    if (misplacedItems.length >= Math.max(1, Math.round(totalItems * 0.2))) return 'rgba(220,38,38,1)';
+    return 'rgba(249,115,22,1)';
   }
 
   const summaryOrder = [
-    { key: 'zones', title: 'TOTAL ZONES', value: (() => { const s = new Set(products.map(p => p.Zone).filter(Boolean)); return s.size || 3; })(), gradient: 'bg-gradient-to-br from-slate-700 via-slate-600 to-gray-500' },
+    { key: 'zones', title: 'TOTAL ZONES', value: (() => { const s = new Set(products.map(p => p.Zone).filter(Boolean)); return s.size || 3; })(), gradient: 'bg-slate-700' },
     { key: 'total', title: 'TOTAL ITEMS', value: totalItems, gradient: getPanelGradient('total') },
     { key: 'misplaced', title: 'MISPLACED ITEMS', value: misplacedItems.length, gradient: getPanelGradient('misplaced') },
     { key: 'team', title: 'TOTAL TEAM', value: totalTeam, gradient: getPanelGradient('team') },
@@ -529,7 +519,7 @@ export default function RetailDashboard() {
   const activeGradient = anchoredType ? getPanelGradient(anchoredType) : '';
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-gray-50 to-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
+    <div className="h-screen w-screen overflow-hidden bg-gray-100 font-sans" style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial' }}>
       <div className="max-w-[1400px] mx-auto h-full p-6 flex gap-6 relative">
         {/* Main content */}
         <div className="flex-1 flex flex-col gap-6">
@@ -537,15 +527,13 @@ export default function RetailDashboard() {
             <h2 className="text-2xl font-extrabold text-gray-800">Store Floor — Live View</h2>
           </div>
 
-          <div className="flex-1 bg-white rounded-3xl shadow-[0_20px_40px_rgba(2,6,23,0.06)] p-4 relative overflow-hidden flex flex-col" ref={mapContainerRef}>
-            <div className="flex-1 relative rounded-2xl overflow-hidden border border-gray-200 shadow-inner">
+          <div className="flex-1 bg-white rounded-3xl p-4 relative overflow-hidden flex flex-col border border-gray-200" ref={mapContainerRef}>
+            <div className="flex-1 relative rounded-2xl overflow-hidden border border-gray-200">
               {(selectedSummary === 'zones' && !showZoneModal) && (
                 <>
                   <img src={FLOOR_PLAN_SRC} alt="Floorplan" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_PRODUCT_IMG; }} />
 
-                  {/* === TOP-LEFT quadrant for Men's Wear ===
-                      Positioning below uses the same layout proportions as previous rectangle:
-                      adjust the width/height/left/top values to fine-tune appearance. */}
+                  {/* === TOP-LEFT quadrant for Men's Wear === */}
                   <Quadrant
                     corner="top-left"
                     color={overlayColorForCountByThreshold(zoneCounts[ZONES.A] || 0, maxZoneCount)}
@@ -554,11 +542,9 @@ export default function RetailDashboard() {
                     className="cursor-pointer"
                     style={{
                       left: '6px',
-                      top: '48px',           // corresponds to previous top-12 (adjust if needed)
-                      width: '32%',
-                      height: '46%',
-                      // keep same boxShadow feel as before
-                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
+                      top: '48px',           
+                      width: '44%', 
+                      height: '55%', 
                     }}
                   >
                     {ZONES.A}
@@ -574,27 +560,24 @@ export default function RetailDashboard() {
                     style={{
                       right: '6px',
                       top: '48px',
-                      width: '32%',
-                      height: '46%',
-                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
+                      width: '44%', 
+                      height: '55%', 
                     }}
                   >
                     {ZONES.B}
                   </Quadrant>
 
-                  {/* === BOTTOM half-circle for Trial Room ===
-                        Positioned near the bottom center. Adjust left/width/height to tune curvature. */}
+                  {/* === BOTTOM half-circle for Trial Room === */}
                   <HalfCircle
                     color={overlayColorForCountByThreshold(zoneCounts[ZONES.C] || 0, maxZoneCount)}
                     onClick={() => onZoneClick(ZONES.C)}
                     count={zoneCounts[ZONES.C] || 0}
                     className="cursor-pointer"
                     style={{
-                      left: '34%',
-                      bottom: '24px',       // corresponds to previous bottom-6 (adjust if needed)
-                      width: '32%',
-                      height: '28%',
-                      boxShadow: 'inset 0 6px 18px rgba(255,255,255,0.03)'
+                      left: '20%',  
+                      bottom: '0',  
+                      width: '60%',
+                      height: '40%',
                     }}
                   >
                     {ZONES.C}
@@ -686,7 +669,6 @@ export default function RetailDashboard() {
                 value={loading ? '—' : item.value}
                 onClick={() => onSummaryClick(item.key)}
                 gradient={item.gradient}
-                shadow="shadow-2xl"
                 ariaLabel={item.title}
                 active={selectedSummary === item.key}
               />

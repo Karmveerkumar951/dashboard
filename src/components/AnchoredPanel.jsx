@@ -60,7 +60,7 @@ export default function AnchoredPanel({
   onOpenItem,
   searchQuery,
   setSearchQuery,
-  panelColor = 'rgba(55,65,81,0.88)', // background color when open (overrides default)
+  panelColor = 'rgba(55,65,81,1)', // background color when open
   gradientClass = ''                   // optional tailwind gradient applied to headings / buttons
 }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -118,7 +118,7 @@ export default function AnchoredPanel({
     <div className="absolute left-0 right-0 z-50 inset-x-0 top-0 bottom-0">
       <div
         className="absolute inset-x-0 top-0 bottom-0 rounded-t-xl overflow-hidden border border-white/10 flex flex-col"
-        style={{ background: panelColor, backdropFilter: 'blur(8px)' }}
+        style={{ background: panelColor }}
       >
         <div className={`flex items-center justify-between p-4 border-b ${gradientClass}`}>
           <h3 className="text-lg font-semibold text-white">
@@ -142,7 +142,7 @@ export default function AnchoredPanel({
               />
 
               {showSuggestions && searchQuery && suggestions.length > 0 && (
-                <ul className="absolute left-0 right-0 mt-2 bg-white rounded shadow-lg max-h-56 overflow-auto z-50 border" role="listbox">
+                <ul className="absolute left-0 right-0 mt-2 bg-white rounded border z-50" role="listbox">
                   {suggestions.map((s, idx) => (
                     <li
                       key={(s.SKU || s.id) + idx}
@@ -200,7 +200,7 @@ export default function AnchoredPanel({
             <div className="mt-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {filteredStaff.map(s => (
-                  <div key={s.id} className="relative bg-white rounded-xl p-4 shadow-sm border text-gray-800">
+                  <div key={s.id} className="relative bg-white rounded-xl p-4 border text-gray-800">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3">
                         <div className="relative">
